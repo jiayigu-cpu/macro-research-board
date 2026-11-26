@@ -132,6 +132,19 @@ preview/          夜间 / 日间整页预览图
 Actions 用 `GITHUB_TOKEN` 提交的 push 不会再触发其它 workflow（GitHub 的防递归机制），
 只在 push 阶段接部署会导致定时抓数后线上数据不更新。
 
+**定时抓数的已知限制**：GitHub 的 runner 在境外，抓国内接口会成片失败——实测同一次运行
+只回来 19 条（本机 43 条），M1/M2、LPR、SHIBOR、沪深 300、成交额、外储、美债全部为空。
+流水线为此加了完整性门槛：本次抓到的序列数低于上次 85% 就判定失败、保留旧快照并告警，
+宁可数据不更新，也不让线上变成一个缺数据的看板。
+
+因此**数据真正更新请在本机跑**（本机网络能抓全）：
+
+```bash
+/usr/local/bin/python3 fetch_data.py   # 需要装了 akshare 的解释器
+cp data.json public/data.json
+git commit -am "chore: 更新宏观数据" && git push
+```
+
 改用自己的仓库时，只需：
 
 1. 推到你的仓库 `main` 分支
