@@ -60,5 +60,8 @@ jobs:
       - uses: actions/upload-pages-artifact@v3
         with:
           path: public
+      # 上传刚结束就查 artifact 会返回 0 个（索引尚未可见），等几秒再部署
+      - name: 等待 artifact 索引
+        run: sleep 15
       - id: deployment
         uses: actions/deploy-pages@v4
