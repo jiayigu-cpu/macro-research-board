@@ -199,7 +199,7 @@
           const gid = 'grad' + (++uid);
           const defs = mk('defs', null, svg);
           const lg = mk('linearGradient', { id: gid, x1: 0, y1: 0, x2: 0, y2: 1 }, defs);
-          mk('stop', { offset: '0%', 'stop-color': s.color, 'stop-opacity': si === 0 ? 0.26 : 0.12 }, lg);
+          mk('stop', { offset: '0%', 'stop-color': s.color, 'stop-opacity': si === 0 ? 0.16 : 0.07 }, lg);
           mk('stop', { offset: '100%', 'stop-color': s.color, 'stop-opacity': 0 }, lg);
           mk('path', { d: d, fill: 'url(#' + gid + ')', stroke: 'none' }, svg);
         }
@@ -321,7 +321,7 @@
     const gid = 'sp' + (++uid);
     const defs = mk('defs', null, svg);
     const lg = mk('linearGradient', { id: gid, x1: 0, y1: 0, x2: 0, y2: 1 }, defs);
-    mk('stop', { offset: '0%', 'stop-color': color, 'stop-opacity': 0.3 }, lg);
+    mk('stop', { offset: '0%', 'stop-color': color, 'stop-opacity': 0.18 }, lg);
     mk('stop', { offset: '100%', 'stop-color': color, 'stop-opacity': 0 }, lg);
     mk('path', {
       d: d + 'L' + W.toFixed(2) + ' ' + H + ' L0 ' + H + ' Z', fill: 'url(#' + gid + ')', stroke: 'none'

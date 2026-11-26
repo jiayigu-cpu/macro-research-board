@@ -97,6 +97,18 @@
       '<h1>' + (v.headline || '数据加载中') + '</h1>' +
       '<p>' + (v.advice || '') + '</p>' +
       '<div class="vchips">' + chips + '</div>' +
+      '<div class="hero-art fx" aria-hidden="true"><svg viewBox="0 0 640 170">' +
+        '<path class="ln" d="M34 38 L104 16 L172 50 M104 16 L232 30"/>' +
+        '<path class="ln2" d="M0 132 C40 128 70 104 110 108 C150 112 180 96 220 88 C270 78 300 98 340 74 C380 50 420 66 460 50 C510 32 560 44 620 22"/>' +
+        '<circle class="ring" cx="104" cy="16" r="13"/>' +
+        '<circle class="ring" cx="620" cy="22" r="10"/>' +
+        '<circle class="nd" cx="34" cy="38" r="2"/>' +
+        '<circle class="nd" cx="104" cy="16" r="2.6"/>' +
+        '<circle class="nd" cx="172" cy="50" r="2"/>' +
+        '<circle class="nd" cx="232" cy="30" r="1.8"/>' +
+        '<circle class="nd" cx="620" cy="22" r="3"/>' +
+        '<path class="ln" d="M524 118 h12 M530 112 v12"/>' +
+        '</svg></div>' +
       '</div>';
   }
 
@@ -117,7 +129,7 @@
         '<p class="card-text">' + (c.text || '') + '</p>' +
         '<div class="card-metrics">' + ms + '</div>' +
         '<div class="card-action">' + (c.action || '') + '</div>' +
-        '<div class="card-more">计算逻辑与取值 →</div>';
+        '<div class="card-more">详情 ↗</div>';
       card.addEventListener('click', function () { openDrawer(c); });
       card.addEventListener('keydown', function (e) {
         if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); openDrawer(c); }
@@ -129,7 +141,7 @@
   /* ---------------- 抽屉 ---------------- */
   function openDrawer(c) {
     $('#d-title').textContent = c.title;
-    $('#d-sub').textContent = '结论：' + c.badge + '　·　点下方步骤可追溯到原始取值';
+    $('#d-sub').textContent = '结论：' + c.badge;
     const ms = (c.metrics || []).map(function (m) {
       return '<div class="dm"><em>' + m.k + '</em><b>' + m.v + '</b><i>' + (m.n || '') + '</i></div>';
     }).join('');
@@ -318,7 +330,7 @@
 
     host.innerHTML = '';
     const W = Math.max(host.clientWidth || 420, 260);
-    const H = 224;
+    const H = Math.max(host.clientHeight || 224, 200);
     const NS = 'http://www.w3.org/2000/svg';
     const svg = document.createElementNS(NS, 'svg');
     svg.setAttribute('width', W); svg.setAttribute('height', H);
@@ -348,10 +360,10 @@
     const box = function (x1, y1, x2, y2, color, op) {
       mk('rect', { x: x1, y: y1, width: Math.max(x2 - x1, 0), height: Math.max(y2 - y1, 0), fill: color, opacity: op });
     };
-    box(x0, y0, W - pad.r, H - pad.b, cssVar('--up'), .055);     // 右下 复苏
-    box(x0, pad.t, W - pad.r, y0, cssVar('--alt'), .05);         // 右上 过热
-    box(pad.l, pad.t, x0, y0, cssVar('--down'), .05);            // 左上 滞胀
-    box(pad.l, y0, x0, H - pad.b, cssVar('--down'), .04);        // 左下 衰退
+    box(x0, y0, W - pad.r, H - pad.b, cssVar('--up'), .04);     // 右下 复苏
+    box(x0, pad.t, W - pad.r, y0, cssVar('--alt'), .035);         // 右上 过热
+    box(pad.l, pad.t, x0, y0, cssVar('--down'), .035);            // 左上 滞胀
+    box(pad.l, y0, x0, H - pad.b, cssVar('--down'), .028);        // 左下 衰退
 
     // 零轴
     mk('line', { x1: pad.l, x2: W - pad.r, y1: y0, y2: y0, stroke: cssVar('--line-2'), 'stroke-width': 1, 'stroke-dasharray': '3 3' });
@@ -418,7 +430,7 @@
     if (pts('surplus_m1ppi')) lines.push({ name: '剩余流动性 M1−PPI', points: pts('surplus_m1ppi'), color: cssVar('--alt'), area: false });
     if (pts('surplus_m2gdp')) lines.push({ name: '剩余流动性 M2−GDP', points: pts('surplus_m2gdp'), color: cssVar('--down'), area: false });
     if (!lines.length) { host.innerHTML = '<div class="chart-empty">序列待接入</div>'; return; }
-    MC.draw(host, { lines: lines, unit: 'pp', nd: 1, zero: true, height: 196 });
+    MC.draw(host, { lines: lines, unit: 'pp', nd: 1, zero: true, height: Math.max(host.clientHeight || 196, 170) });
   }
 
   /* ---------------- 拥挤度 ---------------- */
