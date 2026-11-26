@@ -40,8 +40,8 @@
   function cssVar(name) { return getComputedStyle(document.documentElement).getPropertyValue(name).trim() || '#888'; }
 
   /* ---------------- 序列 ---------------- */
-  function pts(k) { const s = (DATA.series || {})[k]; return s && s.points ? s.points : null; }
-  function freqOf(k) { const s = (DATA.series || {})[k]; return s ? s.freq : 'D'; }
+  function pts(k) { if (!DATA) return null; const s = (DATA.series || {})[k]; return s && s.points ? s.points : null; }
+  function freqOf(k) { if (!DATA) return 'D'; const s = (DATA.series || {})[k]; return s ? s.freq : 'D'; }
 
   /* ---------------- 数据加载 ---------------- */
   // 首次加载破缓存；轮询走协商缓存（服务端带 ETag，命中即 304），避免反复拉整包
@@ -705,6 +705,7 @@
   }
 
   function renderAll() {
+    if (!DATA) return;          // 数据未就绪时直接跳过，避免半渲染抛错
     renderTop();
     renderVerdict();
     renderCards();
