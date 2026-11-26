@@ -6,12 +6,11 @@
 const http = require('http');
 const fs = require('fs');
 const path = require('path');
-const { spawn } = require('child_process');
+const { spawn, spawnSync } = require('child_process');
 
 const BASE = __dirname;
 const PUB = path.join(BASE, 'public');
 const DATA = path.join(BASE, 'data.json');
-const py = process.env.PYTHON || '/usr/bin/python3';
 const PORT = Number(process.env.PORT ||
   (process.argv.find(a => a.startsWith('--port=')) || '').split('=')[1]) || 7101;
 const HOST = process.env.HOST || '0.0.0.0';
@@ -31,16 +30,28 @@ let lastRun = 0;
 let lastError = '';
 
 // Python 抓取只在本地可用；线上沙箱没有 akshare，探测一次并缓存结果
+let pyPath = null;
 let pyState = null; // null=未探测 true=可用 false=不可用
-function pyAvailable() {
-  if (pyState !== null) return pyState;
-  if (!fs.existsSync(py)) { pyState = false; return false; }
-  try {
-    const r = require('child_process').spawnSync(py, ['-c', 'import akshare'], { timeout: 25000 });
-    pyState = r.status === 0;
-  } catch (e) {
-    pyState = false;
+// 找一个装了 akshare 的解释器：PATH 里默认的 python3 常常不带这个包
+function resolvePython() {
+  if (pyPath) return pyPath;
+  const cands = [process.env.PYTHON, '/usr/local/bin/python3', '/opt/homebrew/bin/python3', '/usr/bin/python3']
+    .filter(Boolean);
+  for (const c of cands) {
+    if (!fs.existsSync(c)) continue;
+    try {
+      if (spawnSync(c, ['-c', 'import akshare'], { timeout: 25000 }).status === 0) {
+        pyPath = c; pyState = true; return c;
+      }
+    } catch (e) { /* 试下一个 */ }
   }
+  pyPath = cands.find(c => fs.existsSync(c)) || 'python3';
+  pyState = false;
+  return pyPath;
+}
+
+function pyAvailable() {
+  if (pyState === null) resolvePython();
   return pyState;
 }
 
@@ -66,7 +77,7 @@ function refresh(force, res) {
     return json(res, { status: 'cached' });
   }
   lastError = '';
-  const child = spawn(py, ['fetch_data.py'], { cwd: BASE });
+  const child = spawn(resolvePython(), ['fetch_data.py'], { cwd: BASE });
   running = child;
   child.stderr.on('data', d => { lastError += d.toString(); });
   child.on('error', e => {
@@ -133,7 +144,7 @@ server.listen(PORT, HOST, () => {
   if (!fs.existsSync(DATA)) {
     if (pyAvailable()) {
       console.log('首次运行，开始抓取数据…');
-      const c = spawn(py, ['fetch_data.py'], { cwd: BASE, stdio: 'inherit' });
+      const c = spawn(resolvePython(), ['fetch_data.py'], { cwd: BASE, stdio: 'inherit' });
       c.on('error', e => console.log('fetch error', e.message));
     } else {
       console.log('未找到 python3/akshare，使用仓库内 data.json 快照');
