@@ -113,19 +113,30 @@ preview/          夜间 / 日间整页预览图
 所以「免费 + 纯前端」的正确形态是：**CI 定时抓数 → 提交 JSON → 静态站托管 → 前端轮询 JSON**。
 浏览器端是纯静态页面，不需要服务器，也不用付任何费用。
 
-### GitHub Pages（推荐，仓库里已配好）
+### GitHub Pages（已上线）
 
 ```
-.github/workflows/refresh.yml      每工作日 08:40 / 11:40 / 15:40（北京）抓数并提交 data.json
-.github/workflows/deploy-pages.yml  push 到 main 就把 public/ 发布到 Pages
+线上地址   https://jiayigu-cpu.github.io/macro-research-board/
+仓库       https://github.com/jiayigu-cpu/macro-research-board
 ```
 
-启用步骤：
+仓库里两条流水线：
 
-1. 把整个目录推到 GitHub 仓库的 `main` 分支
+```
+.github/workflows/deploy-pages.yml  push 到 main 就发布 public/
+.github/workflows/refresh.yml       工作日 08:40 / 11:40 / 15:40（北京）抓数
+                                    → 提交 data.json → 同一条流水线内重新发布
+```
+
+`refresh.yml` 之所以自己走完部署、而不是靠 push 触发 `deploy-pages`，是因为
+Actions 用 `GITHUB_TOKEN` 提交的 push 不会再触发其它 workflow（GitHub 的防递归机制），
+只在 push 阶段接部署会导致定时抓数后线上数据不更新。
+
+改用自己的仓库时，只需：
+
+1. 推到你的仓库 `main` 分支
 2. Settings → Pages → Source 选 **GitHub Actions**
-3. Actions 里手动跑一次 `deploy-pages`，拿到 `https://<user>.github.io/<repo>/`
-4. `refresh-data` 会按 cron 自动更新数据；也可随时手动触发
+3. Actions 里手动跑一次 `deploy-pages`，或等下次 push 自动发布
 
 ### Cloudflare Pages / Vercel
 
