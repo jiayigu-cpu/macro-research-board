@@ -1,0 +1,9 @@
+.git
+.gitignore
+.backup_v1_20261126
+preview
+node_modules
+*.zip
+deploy-github.sh
+README.md
+.wbapp_*.genie

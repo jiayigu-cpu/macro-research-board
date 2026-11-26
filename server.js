@@ -64,17 +64,17 @@ function json(res, obj, code = 200) {
   res.end(body);
 }
 
-function refresh(force, res) {
+function startFetch(force) {
   const now = Date.now();
-  if (running) return json(res, { status: 'running', message: '已有抓取任务在执行' });
+  if (running) return { status: 'running', message: '已有抓取任务在执行' };
   if (!pyAvailable()) {
-    return json(res, {
+    return {
       status: 'error',
       message: '当前线上环境不提供数据抓取，展示的是最近一次抓取的快照。需要更新数据请在本机运行 python3 fetch_data.py 后重新发布。'
-    });
+    };
   }
   if (!force && now - lastRun < 5 * 60 * 1000 && fs.existsSync(DATA)) {
-    return json(res, { status: 'cached' });
+    return { status: 'cached' };
   }
   lastError = '';
   const child = spawn(resolvePython(), ['fetch_data.py'], { cwd: BASE });
@@ -89,9 +89,14 @@ function refresh(force, res) {
     clearTimeout(killer);
     running = null;
     lastRun = Date.now();
+    console.log('[fetch] 结束 code=' + code + ' 用时 ' + ((Date.now() - now) / 1000).toFixed(0) + 's');
     if (code !== 0) console.log('fetch exit', code, lastError.slice(0, 400));
   });
-  json(res, { status: 'started' });
+  return { status: 'started' };
+}
+
+function refresh(force, res) {
+  json(res, startFetch(force));
 }
 
 const server = http.createServer((req, res) => {
@@ -124,7 +129,60 @@ const server = http.createServer((req, res) => {
   }
 
   if (p === '/api/status') {
-    return json(res, { running: !!running, lastRun, python: pyAvailable(), error: lastError.slice(0, 300) });
+    return json(res, {
+      running: !!running,
+      lastRun,
+      python: pyAvailable(),
+      autoFetch: AUTO_FETCH,
+      dataAgeHours: Number.isFinite(dataAgeHours()) ? Number(dataAgeHours().toFixed(2)) : null,
+      error: lastError.slice(0, 300)
+    });
+  }
+
+  // 环境诊断：用来判断当前托管节点能否直连国内数据源、是否具备 Python 抓数能力
+  if (p === '/api/probe') {
+    const https = require('https');
+    const targets = [
+      ['百度基准', 'https://www.baidu.com/'],
+      ['新浪行情', 'https://hq.sinajs.cn/list=sh000300'],
+      ['腾讯快照', 'https://qt.gtimg.cn/q=sh000300'],
+      ['腾讯K线', 'https://web.ifzq.gtimg.cn/appstock/app/fqkline/get?param=sh000300,day,,,5,'],
+      ['东财行情', 'https://push2.eastmoney.com/api/qt/stock/get?secid=1.000300&fields=f43,f58'],
+      ['东财宏观', 'https://datacenter-web.eastmoney.com/api/data/v1/get?reportName=RPT_ECONOMY_PMI&columns=ALL&pageSize=1&sortColumns=REPORT_DATE&sortTypes=-1']
+    ];
+    const results = [];
+    let left = targets.length;
+    const done = () => {
+      if (--left > 0) return;
+      json(res, {
+        node: process.version,
+        python: pyAvailable(),
+        tz: Intl.DateTimeFormat().resolvedOptions().timeZone,
+        now: new Date().toISOString(),
+        net: results
+      });
+    };
+    targets.forEach(([name, url]) => {
+      const t0 = Date.now();
+      const r = { name, url, ok: false };
+      const req = https.get(url, {
+        timeout: 9000,
+        headers: {
+          'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36',
+          'Accept': '*/*',
+          'Referer': 'https://finance.sina.com.cn/'
+        }
+      }, rs => {
+        let body = '';
+        rs.setEncoding('utf8');
+        rs.on('data', c => { if (body.length < 400) body += c; if (body.length > 80000) rs.destroy(); });
+        rs.on('end', () => { r.ok = rs.statusCode < 400; r.status = rs.statusCode; r.ms = Date.now() - t0; r.head = body.slice(0, 180).replace(/\s+/g, ' '); results.push(r); done(); });
+        rs.on('error', e => { r.err = String(e.message); r.ms = Date.now() - t0; results.push(r); done(); });
+      });
+      req.on('timeout', () => { r.err = 'timeout'; r.ms = Date.now() - t0; req.destroy(); });
+      req.on('error', e => { r.err = String(e.code || e.message); r.ms = Date.now() - t0; results.push(r); done(); });
+    });
+    return;
   }
 
   let file = path.join(PUB, p === '/' ? 'index.html' : decodeURIComponent(p));
@@ -139,8 +197,41 @@ const server = http.createServer((req, res) => {
   });
 });
 
+/* ---------------- 自动抓数（容器/云托管形态） ----------------
+   AUTO_FETCH=1 时启用：服务启动先返回现有快照（毫秒级），
+   后台按需补抓；常驻期间每小时检查一次，数据过旧就抓。
+   抓取耗时 1-3 分钟，不阻塞任何请求。                                   */
+const AUTO_FETCH = process.env.AUTO_FETCH === '1';
+const STALE_HOURS = Number(process.env.STALE_HOURS || 6);
+
+function dataAgeHours() {
+  try {
+    const st = fs.statSync(DATA);
+    return (Date.now() - st.mtimeMs) / 3600000;
+  } catch (e) {
+    return Infinity;
+  }
+}
+
+function autoFetch(reason, force) {
+  if (running || !pyAvailable()) return;
+  console.log('[auto] 触发抓数：' + reason + '（当前数据 ' + dataAgeHours().toFixed(1) + 'h 前）');
+  startFetch(!!force);
+}
+
+function tick() {
+  const age = dataAgeHours();
+  const now = new Date();
+  const wd = now.getDay();
+  const hm = now.getHours() * 100 + now.getMinutes();
+  // 交易时段（工作日 09:00-15:30）要求更勤，其余时段放宽
+  const inSession = wd >= 1 && wd <= 5 && hm >= 900 && hm <= 1530;
+  const limit = inSession ? 2 : STALE_HOURS;
+  if (age > limit) autoFetch('数据已过期 ' + age.toFixed(1) + 'h');
+}
+
 server.listen(PORT, HOST, () => {
-  console.log('宏观研究看板: http://' + HOST + ':' + PORT);
+  console.log('宏观研究看板: http://' + HOST + ':' + PORT + '  autoFetch=' + AUTO_FETCH);
   if (!fs.existsSync(DATA)) {
     if (pyAvailable()) {
       console.log('首次运行，开始抓取数据…');
@@ -149,5 +240,9 @@ server.listen(PORT, HOST, () => {
     } else {
       console.log('未找到 python3/akshare，使用仓库内 data.json 快照');
     }
+  } else if (AUTO_FETCH) {
+    console.log('现有快照 ' + dataAgeHours().toFixed(1) + 'h 前，先提供服务，后台按需补抓');
+    setTimeout(tick, 3000);
+    setInterval(tick, 3600 * 1000);
   }
 });
