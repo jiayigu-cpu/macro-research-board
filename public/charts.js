@@ -61,7 +61,16 @@
      避免 innerHTML 清空造成的一帧空白（等价于 ECharts setOption 的过渡）。 */
   function newLayer(host) {
     if (!host.classList.contains('mc-host')) host.classList.add('mc-host');
-    const olds = Array.prototype.slice.call(host.querySelectorAll('.mc-layer'));
+    let olds = Array.prototype.slice.call(host.querySelectorAll('.mc-layer'));
+    // 防御：正常情况下最多只该有一层旧图。若出现堆积（例如页面处于
+    // 后台、requestAnimationFrame 被浏览器暂停而未回收），先清掉多余层，
+    // 否则反复刷新会让 DOM 里的图层无限增长。
+    if (olds.length > 1) {
+      olds.slice(0, olds.length - 1).forEach(function (o) {
+        if (o.parentNode) o.parentNode.removeChild(o);
+      });
+      olds = olds.slice(-1);
+    }
     const layer = document.createElement('div');
     layer.className = 'mc-layer';
     host.appendChild(layer);
@@ -71,12 +80,14 @@
   function commitLayer(t) {
     if (!t.olds.length) { t.layer.style.opacity = '1'; return; }
     t.layer.style.opacity = '0';
-    requestAnimationFrame(function () {
-      requestAnimationFrame(function () { t.layer.style.opacity = '1'; });
-      t.olds.forEach(function (o) {
-        o.style.opacity = '0';
-        setTimeout(function () { if (o.parentNode) o.parentNode.removeChild(o); }, 320);
-      });
+    // 强制一次布局刷新，让 0 → 1 的过渡真正发生。
+    // 不用 requestAnimationFrame：页面在后台时它会被暂停，
+    // 旧层就永远回收不掉（刷几次后 DOM 里会堆满图层）。
+    void t.layer.offsetWidth;
+    t.layer.style.opacity = '1';
+    t.olds.forEach(function (o) {
+      o.style.opacity = '0';
+      setTimeout(function () { if (o.parentNode) o.parentNode.removeChild(o); }, 320);
     });
   }
 

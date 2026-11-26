@@ -836,30 +836,96 @@
   }
 
   /* ---------------- 手动刷新 ---------------- */
+  // 把在线行情合并进当前数据。只替换点位与首末日期，保留原 unit / freq / nd，
+  // 因此图表格式不会因为数据来源变化而错乱。
+  function applyLive(live) {
+    const changed = [];
+    Object.keys(live.series || {}).forEach(function (k) {
+      const tgt = DATA.series && DATA.series[k];
+      const pts = live.series[k];
+      if (!tgt || !pts || !pts.length) return;
+      const old = tgt.points && tgt.points.length ? tgt.points[tgt.points.length - 1][1] : null;
+      const now = pts[pts.length - 1][1];
+      tgt.points = pts;
+      tgt.first = pts[0][0];
+      tgt.last = pts[pts.length - 1][0];
+      tgt.n = pts.length;
+      if (old === null || Math.abs(now - old) > 1e-9) changed.push(k);
+    });
+    if (live.date) {
+      DATA.asof = DATA.asof || {};
+      DATA.asof.trade_date = live.date;
+    }
+    // 同步指纹，避免下一轮轮询把这次手动更新误判成「服务端来了新数据」
+    FP = fpOf(DATA);
+    return Array.from(new Set(changed.map(function (k) {
+      return (window.MCLive && window.MCLive.labels && window.MCLive.labels[k]) || k;
+    })));
+  }
+
   async function manualRefresh() {
     const b = $('#btn-refresh');
     if (b.disabled) return;
     b.disabled = true;
     b.textContent = '抓取中…';
+    let done = false;
+
+    // 1) 先试服务端全量抓取：本机跑 Node 且装了 akshare 时走这条，能抓到全部 43 条
     try {
       let j = {};
       try {
         j = await (await fetch('api/refresh?force=1', { method: 'POST' })).json();
-      } catch (e) {
-        j = { status: 'error', message: '当前为静态部署，不支持在线抓取；数据由定时任务更新。' };
+      } catch (e) { j = { status: 'error' }; }
+      if (j.status && j.status !== 'error') {
+        if (j.status === 'started') {
+          // Python 抓全量要 1–2 分钟，不能只等 900ms 就去读；交给轮询接管
+          toast('已启动抓取，约 1–2 分钟完成，完成后页面自动更新');
+          b.textContent = '抓取中';
+          done = true;
+        } else if (j.status === 'running') {
+          toast('已有抓取任务在执行，稍后自动更新');
+          b.textContent = '抓取中';
+          done = true;
+        } else {
+          await new Promise(function (r) { setTimeout(r, 900); });
+          await poll(true);
+          b.textContent = '已更新';
+          done = true;
+        }
       }
-      if (j.status === 'error') {
-        toast(j.message || '刷新失败');
+    } catch (e) { /* 静默落到在线兜底 */ }
+
+    // 2) 服务端不可用（线上无 Python）时，改由浏览器直连公开行情接口
+    if (!done) {
+      if (!window.MCLive) {
+        toast('当前环境不支持在线取数');
         b.textContent = '静态快照';
       } else {
-        await new Promise(function (r) { setTimeout(r, 900); });
-        await poll(true);
-        b.textContent = '已更新';
+        b.textContent = '取行情…';
+        try {
+          const prevAsOf = (DATA.asof || {}).trade_date || '';
+          const live = await window.MCLive.fetchLive(DATA.series);
+          const names = applyLive(live);
+          renderAll();
+          b.textContent = '已更新';
+          const d = new Date();
+          const hhmm = d.getHours() * 100 + d.getMinutes();
+          const intraday = live.date === [d.getFullYear(), ('0' + (d.getMonth() + 1)).slice(-2), ('0' + d.getDate()).slice(-2)].join('-') && hhmm >= 930 && hhmm < 1500;
+          const when = live.date.slice(5) + (intraday ? ' 盘中' : '');
+          const miss = (live.failed && live.failed.length) ? '（' + live.failed.join('、') + ' 未取到）' : '';
+          if (names.length) {
+            toast('已更新 ' + names.join('、') + ' → ' + when + miss +
+              '　宏观月度与利率仍为 ' + (prevAsOf ? prevAsOf.slice(5) : '快照') + ' 快照');
+          } else {
+            toast('行情已是最新（' + when + '），无变化' + miss);
+          }
+        } catch (e) {
+          b.textContent = '刷新失败';
+          toast('在线取行情失败：' + String((e && e.message) || e));
+        }
       }
-    } catch (e) {
-      b.textContent = '刷新失败';
-      toast(String((e && e.message) || e));
     }
+
     setTimeout(function () { b.disabled = false; b.textContent = '刷新数据'; }, 1600);
   }
 
