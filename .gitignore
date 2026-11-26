@@ -1,0 +1,10 @@
+# 依赖与运行产物
+node_modules/
+server.log
+
+# 旧版本备份（仅本地留档）
+.backup_v1_20261126/
+*.zip
+
+# 系统文件
+.DS_Store

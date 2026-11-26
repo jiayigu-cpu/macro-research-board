@@ -1,0 +1,7 @@
+# Cloudflare Pages / Netlify 共用的响应头配置
+# 数据文件必须每次协商校验，否则轮询会一直读到 CDN 缓存的旧快照
+/data.json
+  Cache-Control: no-cache
+
+/*.html
+  Cache-Control: no-cache

@@ -1,0 +1,38 @@
+name: deploy-pages
+
+# 纯静态发布：把 public/ 直接推到 GitHub Pages。
+# 数据由 refresh-data 定时提交，push 到这里就自动重新发布。
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 校验数据快照
+        run: |
+          test -f public/data.json || { echo "缺少 public/data.json"; exit 1; }
+          python -c "import json;json.load(open('public/data.json',encoding='utf-8'));print('data.json 可用')"
+
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: public
+      - id: deployment
+        uses: actions/deploy-pages@v4

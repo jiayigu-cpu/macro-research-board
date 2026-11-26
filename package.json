@@ -1,0 +1,11 @@
+{
+  "name": "macro-research-board",
+  "version": "3.1.0",
+  "private": true,
+  "description": "宏观研究看板：结论前置 + 六维指标体系（正式/高频）+ 宏观因子（因子择时、流动性映射、拥挤度、AQR 四因子）+ 时序走势，前端定时轮询、平滑更新",
+  "scripts": {
+    "start": "node server.js",
+    "serve": "node server.js --port=7101",
+    "fetch": "python3 fetch_data.py"
+  }
+}

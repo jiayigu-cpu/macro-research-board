@@ -1,0 +1,139 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-theme="dark">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>宏观研究看板 · 六维指标体系与宏观因子</title>
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+
+<div class="top">
+  <div class="wrap topbar">
+    <div class="brand">
+      <b>宏观研究看板</b>
+      <span>六维指标体系 × 宏观因子（Beta 与资产配置）</span>
+    </div>
+    <div class="tools">
+      <span class="meta">数据截至 <b id="asof">—</b></span>
+      <span class="meta">抓取 <b id="upd">—</b></span>
+      <span class="poll" id="poll" data-state="wait"><i></i><b>自动刷新</b><em>60s</em></span>
+      <button class="btn ghost" id="btn-theme" type="button">日间</button>
+      <button class="btn primary" id="btn-refresh" type="button">刷新数据</button>
+    </div>
+  </div>
+</div>
+
+<main class="wrap">
+
+  <!-- ================= 结论：核心判断 + 结论卡 ================= -->
+  <section id="verdict" class="verdict-slot"></section>
+  <section id="cards" class="cards"></section>
+
+  <!-- ================= 01 指标体系 ================= -->
+  <section class="part">
+    <div class="phead">
+      <div class="pno">01</div>
+      <div class="ptxt">
+        <h2>宏观研究需要跟踪的指标体系</h2>
+        <p>按「增长 — 通胀 — 流动性 — 财政 — 外部 — 政策」六维搭建。每个维度拆成两类：<b>正式数据</b>低频、权威，决定方向；<b>高频数据</b>领先、可验证，决定节奏与拐点。</p>
+      </div>
+    </div>
+    <div class="dimstrip" id="dimstrip"></div>
+    <div class="dimgrid" id="dims"></div>
+  </section>
+
+  <!-- ================= 02 宏观因子 ================= -->
+  <section class="part">
+    <div class="phead">
+      <div class="pno">02</div>
+      <div class="ptxt">
+        <h2>宏观因子：Beta 与资产配置</h2>
+        <p>把宏观状态翻译成因子暴露：先用增长 × 通胀四象限定 Beta，再用流动性映射估值中枢，用拥挤度做二阶校验，最后以 AQR 四因子做跨资产打分。</p>
+      </div>
+    </div>
+
+    <div class="block">
+      <div class="bhead"><span class="bno">2.1</span><h3>因子择时：增长 × 通胀四象限</h3>
+        <span class="bhint">宏观状态决定风格因子切换</span></div>
+      <div class="duo">
+        <div class="panel"><div class="ptitle">当前象限定位</div><div id="quad"></div></div>
+        <div class="panel"><div class="ptitle">近 36 个月状态迁移（增长 z，通胀 z）</div><div id="qpath"></div></div>
+      </div>
+      <div class="panel mt">
+        <div class="ptitle">象限 → 风格因子映射</div>
+        <div class="table-wrap"><table class="tbl" id="timing"></table></div>
+      </div>
+    </div>
+
+    <div class="block">
+      <div class="bhead"><span class="bno">2.2</span><h3>流动性映射：剩余流动性 → 估值中枢</h3>
+        <span class="bhint">M1−M2 剪刀差、M1−PPI、M2−名义 GDP 与全 A 估值联动</span></div>
+      <div class="duo">
+        <div class="panel"><div class="ptitle">剪刀差与剩余流动性</div><div class="chart-body lg" id="liq-chart"></div></div>
+        <div class="panel"><div class="ptitle">读数与映射规则</div><div id="liq-read"></div></div>
+      </div>
+    </div>
+
+    <div class="block">
+      <div class="bhead"><span class="bno">2.3</span><h3>拥挤度监控：动量策略的崩溃风险</h3>
+        <span class="bhint">成交额、波动率、成交集中度三项二阶因子</span></div>
+      <div class="panel"><div id="crowd"></div></div>
+    </div>
+
+    <div class="block">
+      <div class="bhead"><span class="bno">2.4</span><h3>AQR 式宏观风格四因子</h3>
+        <span class="bhint">Carry / Value / Momentum / Defensive，大类资产配置主流框架</span></div>
+      <div id="aqr"></div>
+      <div class="panel mt">
+        <div class="ptitle">四因子的跨资产映射</div>
+        <div class="table-wrap"><table class="tbl" id="aqr-table"></table></div>
+      </div>
+    </div>
+
+    <div class="block">
+      <div class="bhead"><span class="bno">2.5</span><h3>宏观因子总表</h3>
+        <span class="bhint">因子 → 构造方式 → 受益资产 → 当前读数</span></div>
+      <div class="panel"><div class="table-wrap"><table class="tbl" id="ftable"></table></div></div>
+    </div>
+  </section>
+
+  <!-- ================= 03 时序走势 ================= -->
+  <section class="part">
+    <div class="phead">
+      <div class="pno">03</div>
+      <div class="ptxt">
+        <h2>指标时序走势</h2>
+        <p>全部指标的历史轨迹，按六维分组。悬停可读具体数值；虚线为参考位（荣枯线、零轴、均线）。</p>
+      </div>
+    </div>
+    <div class="chips" id="chips"></div>
+    <div class="charts" id="charts"></div>
+  </section>
+
+</main>
+
+<footer class="foot">
+  <div class="wrap">
+    <div class="foot-row"><span class="fk">数据来源</span><span id="foot-src">—</span></div>
+    <div class="foot-row"><span class="fk">口径说明</span><span id="foot-note">—</span></div>
+    <div class="foot-row"><span class="fk">待接入</span><span id="foot-pending">—</span></div>
+  </div>
+</footer>
+
+<div class="scrim" id="scrim"></div>
+<aside class="drawer" id="drawer" aria-hidden="true">
+  <div class="drawer-head">
+    <div>
+      <div class="dtitle" id="d-title"></div>
+      <div class="dsub" id="d-sub"></div>
+    </div>
+    <button class="btn ghost" id="d-close" type="button">关闭</button>
+  </div>
+  <div class="drawer-body" id="d-body"></div>
+</aside>
+
+<script src="charts.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
