@@ -6,26 +6,139 @@
 
 配色沿用 A 股行情终端习惯（红涨绿跌），支持夜间 / 日间两套主题。
 
-## 启动
+---
+
+## 换服务器 / 换网址：从 GitHub 重新部署
+
+整份部署是可复制的脚本，仓库里没有任何东西依赖某一台具体的机器。
+换机器时只需要一台干净的 Ubuntu 22.04 / 24.04（1 核 1G 起，磁盘 10G），然后：
 
 ```bash
-# 1. 抓取数据（需要 python3 + akshare，约 1.5–2 分钟）
-python3 fetch_data.py
+sudo apt-get update && sudo apt-get install -y git
+git clone https://github.com/jiayigu-cpu/macro-research-board.git
+cd macro-research-board
+sudo bash deploy/install.sh
+```
 
-# 2. 起服务（零依赖，只用 Node 内置模块）
-node server.js --port=7101
+跑完就有 `http://<公网IP>`。脚本按顺序做了这些事：
+
+| 步骤 | 内容 |
+| --- | --- |
+| 依赖 | apt 装 `python3-venv`、`nginx`、`certbot`、`rsync`；没有 node 就装 |
+| 代码 | `rsync` 到 `/opt/macro-board`，不覆盖已有的 `data.json` 和 `venv` |
+| Python | 建 venv，按 `requirements.txt` 装 `akshare==1.18.60` |
+| 常驻 | 写 `macro-board.service`，开机自启 + 崩溃 5 秒重启 |
+| 反代 | nginx 抢 80，转发到 `127.0.0.1:8080`，开 gzip |
+| 自检 | 打 `/api/status` 与首页，打印访问地址和后续步骤 |
+
+脚本是幂等的：已经装好的机器重复执行，等于「拉最新代码 + 重装依赖 + 重启服务」。
+
+可选参数全部走环境变量：
+
+| 变量 | 默认 | 说明 |
+| --- | --- | --- |
+| `DOMAIN` | 空 | 填了就自动签证书、开 HTTPS |
+| `EMAIL` | 空 | 证书通知邮箱，`DOMAIN` 非空时建议填 |
+| `APP_DIR` | `/opt/macro-board` | 安装目录 |
+| `APP_USER` | `ubuntu` | 运行用户，不存在则用当前登录用户 |
+| `PORT` | `8080` | Node 监听端口（仅本机） |
+| `HTTP_PORT` | `80` | nginx 对外端口 |
+| `SKIP_FETCH` | `0` | 设 `1` 则首次不抓数，直接用仓库快照 |
+
+```bash
+# 带域名一步到位
+sudo DOMAIN=board.example.com EMAIL=me@example.com bash deploy/install.sh
+```
+
+### 脚本管不到的两步手工作业
+
+云厂商的控制台没法用脚本代劳，换机器时这两处要自己点：
+
+1. **防火墙放行端口**：腾讯云轻量 → 实例 → 防火墙 → 添加规则 → 自定义 TCP `80`、`443`、`8443`，来源 `0.0.0.0/0`。
+   不放行的话服务在本机是好的、外网连不上，这个最容易误判成程序问题。
+2. **域名 A 记录**：指向新机器的公网 IP。只换 IP 而沿用旧域名时，改这一条就够了。
+
+### 网址变了怎么改
+
+| 变更 | 要动的配置 |
+| --- | --- |
+| 换 IP | 只改 DNS 的 A 记录，机器上一个字不用动 |
+| 换域名 | `sudo bash deploy/setup-https.sh 新域名 邮箱` |
+| 撤掉 HTTPS 回 HTTP | `sudo DOMAIN= bash deploy/install.sh` |
+
+## HTTPS
+
+证书用 Let's Encrypt，免费，验证走 80 端口的 `/.well-known/acme-challenge/`（nginx 静态返回），
+续期由 `certbot.timer` 每天两次自动跑，续完自动 reload nginx。
+
+```bash
+sudo bash deploy/setup-https.sh board.example.com you@example.com
+```
+
+**一个必须知道的坑**：广州这类国内地域，**未备案域名访问 443 会被云厂商拦**。
+所以脚本同时监听 `443` 和 `8443`：443 不通就换 8443，证书是同一张，浏览器一样是绿锁，只是网址多带一个端口。
+备案批下来后，`sudo HTTPS_PORT=443 bash deploy/setup-https.sh 域名` 重跑一次即可去掉端口。
+
+如果 80 端口也被拦导致证书签不下来，脚本会打印 DNS 验证的替代方案（手动加一条 TXT 记录）；
+DNS 托管在 DNSPod 的话，可以装 `certbot-dns-dnspod` 让续期也全自动。
+
+## 当前线上部署
+
+| 项目 | 值 |
+| --- | --- |
+| 地址 | http://114.132.50.154 |
+| 机器 | 腾讯云轻量，广州四区，Ubuntu 24.04，2 核 2G |
+| 安装目录 | `/opt/macro-board` |
+| 进程 | systemd `macro-board.service`，用户 `ubuntu`，Node 监听 `127.0.0.1:8080` |
+| 入口 | nginx 80 → 8080，gzip 已开（`styles.css` 38K → 10.9K） |
+| Python | `/opt/macro-board/venv`，`akshare==1.18.60` |
+| 数据 | 43 条序列，最近交易日以页面顶部标注为准 |
+
+运维命令：
+
+```bash
+systemctl status macro-board       # 服务状态
+systemctl restart macro-board      # 改完代码重启
+journalctl -u macro-board -f       # 跟抓数日志
+tail -f /var/log/nginx/macro-board.access.log
+```
+
+更新代码：`cd 仓库目录 && git pull && sudo bash deploy/install.sh`
+
+**数据怎么自己变**：服务常驻，每小时自查一次——交易时段（工作日 9:00–15:30）数据超过 2 小时就重抓，
+其余时段超过 6 小时重抓。抓数在后台跑约 1.5 分钟，不阻塞请求，抓完前端轮询自动接住。
+所以数据更新**不需要任何定时任务**，也不需要在本机跑脚本。
+
+---
+
+## 本地开发
+
+服务器上用 `deploy/install.sh` 部署；只想在本机看效果、改样式时，不用装 nginx 也不用 sudo：
+
+```bash
+npm run fetch        # 抓数，需 python3 + akshare，约 1.5–2 分钟
+npm start            # 起服务，零依赖，只用 Node 内置模块
 # 打开 http://127.0.0.1:7101
 ```
 
-线上托管时读 `PORT` 环境变量并绑定 `0.0.0.0`；沙箱内若无 akshare，「刷新数据」会提示
-当前展示的是最近一次快照，前端另有 `public/data.json` 静态兜底。
+`server.js` 读 `PORT` / `HOST` 环境变量，默认 `7101` 与 `0.0.0.0`。
+`AUTO_FETCH=1` 时才启用「数据过期自动重抓」，本地调试建议不开。
+如果本机解释器里没有 akshare，「刷新数据」会提示当前展示的是快照，前端另有 `public/data.json` 静态兜底。
 
 ## 目录
 
 ```
+deploy/           服务器部署套件（换机器只靠这个目录）
+  install.sh          一键安装：依赖 + venv + systemd + nginx + 自检
+  setup-https.sh      绑域名、签证书、开 443/8443、装续期钩子
+  macro-board.service.tpl  systemd 单元模板
+  nginx-http.conf.tpl / nginx-https.conf.tpl  nginx 配置模板
 server.js         本地/托管服务（静态文件 + /api/dashboard + /api/refresh + /api/status）
 fetch_data.py     akshare 取数 → data.json（一次请求同时产出读数、序列与派生指标）
-data.json         最新快照
+data.json         最新快照（服务端权威数据源，/api/dashboard 读这个）
+requirements.txt  Python 依赖，akshare 固定 1.18.60（见下方版本坑）
+package.json      npm start / npm run fetch 快捷入口
+Dockerfile        容器化备选方案（云托管用，轻量服务器不需要）
 vercel.json       Vercel 静态托管配置（输出目录 public、data.json 不缓存）
 .github/workflows 定时抓数（refresh.yml）与 Pages 发布（deploy-pages.yml）
 public/
@@ -33,10 +146,14 @@ public/
   styles.css      行情终端配色与版式
   charts.js       SVG 走势图引擎（多序列、面积、零轴、阶梯线、十字准星提示、双缓冲刷新）
   app.js          渲染逻辑：结论卡、六维、四象限散点、AQR、图表清单、定时轮询
-  data.json       静态兜底快照（数据更新后同步复制）
+  data.json       静态兜底快照（给 GitHub Pages 这类纯静态托管用，由根目录 data.json 复制）
   _headers        Cloudflare Pages / Netlify 的响应头（data.json 不缓存）
 preview/          夜间 / 日间整页预览图
 ```
+
+> **akshare 版本坑**：必须锁 `1.18.60`。1.20 系列把 12 个接口改名（如 `stock_zh_index_daily`
+> 改成 `index_zh_daily_sina`），装新版会静默少抓——实测 43 条只回来 19 条，`asof` 变成 `None`，
+> 而且不报错。`requirements.txt` 已固定版本，别升级。
 
 ## 页面结构
 
@@ -109,12 +226,15 @@ preview/          夜间 / 日间整页预览图
 
 ## 在线刷新（点按钮真的取数）
 
-线上没有 Python，`/api/refresh` 必然失败，所以「刷新数据」按钮改成两级：
+「刷新数据」按钮分两级，按环境自动降级：
 
-1. 先试服务端 `/api/refresh`——本机跑 Node 且装了 akshare 时走这条，能全量抓 43 条
-2. 服务端不可用，转由浏览器直连公开行情接口（`public/live.js`），不需要 Python、不需要 key、不需要代理
+1. 先试服务端 `/api/refresh`——轻量服务器上装了 akshare，走这条能全量抓 43 条
+2. 服务端不可用（GitHub Pages 这类纯静态托管，没有 Python），转由浏览器直连公开行情接口
+   （`public/live.js`），不需要 Python、不需要 key、不需要代理
 
-**能在线上刷新的**
+**服务端能刷的**：全部 43 条，和定时抓数是同一套 `fetch_data.py`，口径完全一致。
+
+**浏览器兜底能刷的**
 
 | 指标 | 数据源 | 说明 |
 | --- | --- | --- |
@@ -122,7 +242,7 @@ preview/          夜间 / 日间整页预览图
 | 沪深 300 MA60 / 60 日波动率 | 由上面重算 | 口径与 Python 逐位对齐 |
 | 螺纹钢、原油 | 东财 push2his，失败则降级为实时报价 | 尽力而为，取不到会提示并保留快照 |
 
-**刷不了的（保持快照）**
+**浏览器兜底刷不了的（保持快照）**
 
 宏观月度（PMI、CPI/PPI、M1/M2、GDP）、利率（10Y/1Y、SHIBOR、LPR）、财政、外储、黄金、信用利差。
 原因：这类数据要么是月度发布（一个月才变一次，快照足够），要么公开接口没有稳定的跨域来源。
@@ -142,11 +262,14 @@ preview/          夜间 / 日间整页预览图
 - 双缓冲图层的旧层回收不依赖 `requestAnimationFrame`：页面在后台时 rAF 会被暂停，
   旧层会一直堆在 DOM 里（实测连刷几次后图层从 31 涨到 62 且不回落）
 
-## 免费部署
+## 备选托管方案
+
+主用方案是上面那台轻量服务器（有 Python，抓数完整、无冷启动）。下面几种留着当备份或对外分享用，
+区别只在前端能不能拿到「全量 + 实时」的数据。
 
 数据来自 akshare 抓的公开接口，只能在 Python 环境里跑，浏览器无法直连（没有 CORS 头）。
-所以「免费 + 纯前端」的正确形态是：**CI 定时抓数 → 提交 JSON → 静态站托管 → 前端轮询 JSON**。
-浏览器端是纯静态页面，不需要服务器，也不用付任何费用。
+纯静态托管下的正确形态是：**CI 定时抓数 → 提交 JSON → 静态站托管 → 前端轮询 JSON**，
+不需要服务器，也不用付任何费用，代价是只能拿到 CI 抓到的那一份快照。
 
 ### WorkBuddy 托管（自用地址）
 
@@ -205,15 +328,17 @@ preview/          夜间 / 日间整页预览图
 Actions 用 `GITHUB_TOKEN` 提交的 push 不会再触发其它 workflow（GitHub 的防递归机制），
 只在 push 阶段接部署会导致定时抓数后线上数据不更新。
 
-**定时抓数的已知限制**：GitHub 的 runner 在境外，抓国内接口会成片失败——实测同一次运行
-只回来 19 条（本机 43 条），M1/M2、LPR、SHIBOR、沪深 300、成交额、外储、美债全部为空。
-流水线为此加了完整性门槛：本次抓到的序列数低于上次 85% 就判定失败、保留旧快照并告警，
-宁可数据不更新，也不让线上变成一个缺数据的看板。
+**定时抓数的已知限制**：这条流水线曾经只回来 19 条（本机 43 条），M1/M2、LPR、SHIBOR、
+沪深 300、成交额、外储、美债全部为空。当时判断是「runner 在境外，抓国内接口失败」，
+**这个判断是错的**——真正原因是 runner 上装到了 akshare 1.20 系列，
+接口改名后静默返回空。固定到 `1.18.60` 后境外 runner 也能抓全。
+流水线仍保留完整性门槛：本次抓到的序列数低于上次 85% 就判定失败、保留旧快照并告警，
+宁可数据不更新，也不让线上变成一个缺数据的看板。这是兜底，不是常态。
 
-因此**数据真正更新请在本机跑**（本机网络能抓全）：
+纯静态托管下**数据更新靠本机跑**：
 
 ```bash
-/usr/local/bin/python3 fetch_data.py   # 需要装了 akshare 的解释器
+/usr/local/bin/python3 fetch_data.py   # 需要装了 akshare==1.18.60 的解释器
 cp data.json public/data.json
 git commit -am "chore: 更新宏观数据" && git push
 ```
