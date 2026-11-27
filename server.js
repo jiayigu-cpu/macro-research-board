@@ -11,6 +11,7 @@ const { spawn, spawnSync } = require('child_process');
 const BASE = __dirname;
 const PUB = path.join(BASE, 'public');
 const DATA = path.join(BASE, 'data.json');
+const MANUAL = path.join(BASE, 'manual.json');
 const PORT = Number(process.env.PORT ||
   (process.argv.find(a => a.startsWith('--port=')) || '').split('=')[1]) || 7101;
 const HOST = process.env.HOST || '0.0.0.0';
@@ -116,19 +117,42 @@ const server = http.createServer((req, res) => {
     // 带 ETag：轮询时浏览器只做条件请求，数据没变就回 304，省掉整包传输
     fs.stat(DATA, (e, st) => {
       if (e || !st.isFile()) return json(res, { error: 'data.json 不存在，请先抓取数据' }, 500);
-      const etag = 'W/"' + st.size.toString(16) + '-' + Math.floor(st.mtimeMs).toString(16) + '"';
+      // manual.json 的 mtime 参与 ETag：口径改了即使 data.json 没重跑也能立即看到
+      let mm = 0, mr = null;
+      try { mm = fs.statSync(MANUAL).mtimeMs; mr = JSON.parse(fs.readFileSync(MANUAL, 'utf8')); } catch (e2) { /* 没有人工口径文件就走原样 */ }
+      const etag = 'W/"' + st.size.toString(16) + '-' + Math.floor(st.mtimeMs).toString(16) +
+        (mm ? '-' + Math.floor(mm).toString(16) : '') + '"';
       const inm = req.headers['if-none-match'];
       if (inm && inm.split(',').map(s => s.trim()).indexOf(etag) > -1) {
         res.writeHead(304, { ETag: etag, 'Cache-Control': 'no-cache' });
         return res.end();
       }
-      res.writeHead(200, {
+      const head = {
         'Content-Type': 'application/json; charset=utf-8',
         'Cache-Control': 'no-cache',
         ETag: etag,
         'Last-Modified': st.mtime.toUTCString()
+      };
+      if (!mr || !mr.items) {
+        res.writeHead(200, head);
+        return fs.createReadStream(DATA).pipe(res);
+      }
+      // 用 manual.json 覆盖 data.json 里的人工口径（保留抓数写入的自动项，如存准率）
+      let d;
+      try { d = JSON.parse(fs.readFileSync(DATA, 'utf8')); }
+      catch (e3) { res.writeHead(200, head); return fs.createReadStream(DATA).pipe(res); }
+      const man = d.manual || {};
+      const items = man.items || {};
+      Object.keys(mr.items).forEach(k => {
+        const v = mr.items[k];
+        if (v && v.v) items[k] = { v: v.v, note: v.note || '', asof: v.asof || null, src: v.src || '人工', auto: false };
       });
-      fs.createReadStream(DATA).pipe(res);
+      d.manual = Object.assign({}, man, {
+        available: true, items: items,
+        updated: mr.updated || man.updated, source: mr.source || man.source
+      });
+      res.writeHead(200, head);
+      res.end(JSON.stringify(d));
     });
     return;
   }
