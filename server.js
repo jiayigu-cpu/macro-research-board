@@ -79,7 +79,11 @@ function startFetch(force) {
   lastError = '';
   const child = spawn(resolvePython(), ['fetch_data.py'], { cwd: BASE });
   running = child;
-  child.stderr.on('data', d => { lastError += d.toString(); });
+  // stderr 里大多是 tqdm 进度条，只有退出码非 0 时才当错误保留
+  let errBuf = '';
+  child.stderr.on('data', d => {
+    errBuf = (errBuf + d.toString()).slice(-4000);
+  });
   child.on('error', e => {
     lastError = String(e && e.message || e);
     running = null;
@@ -90,7 +94,12 @@ function startFetch(force) {
     running = null;
     lastRun = Date.now();
     console.log('[fetch] 结束 code=' + code + ' 用时 ' + ((Date.now() - now) / 1000).toFixed(0) + 's');
-    if (code !== 0) console.log('fetch exit', code, lastError.slice(0, 400));
+    if (code === 0) {
+      lastError = '';
+    } else {
+      lastError = errBuf.trim() || ('退出码 ' + code);
+      console.log('fetch exit', code, lastError.slice(0, 400));
+    }
   });
   return { status: 'started' };
 }
