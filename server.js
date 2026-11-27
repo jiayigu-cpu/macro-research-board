@@ -138,14 +138,19 @@ const server = http.createServer((req, res) => {
   }
 
   if (p === '/api/status') {
-    return json(res, {
+    let meta = {};
+    try {
+      const d = JSON.parse(fs.readFileSync(DATA, 'utf8'));
+      meta = { sources: d.sources || {}, checks: d.checks || {}, asof: d.asof || null };
+    } catch (e) { /* data.json 还没生成 */ }
+    return json(res, Object.assign({
       running: !!running,
       lastRun,
       python: pyAvailable(),
       autoFetch: AUTO_FETCH,
       dataAgeHours: Number.isFinite(dataAgeHours()) ? Number(dataAgeHours().toFixed(2)) : null,
       error: lastError.slice(0, 300)
-    });
+    }, meta));
   }
 
   // 环境诊断：用来判断当前托管节点能否直连国内数据源、是否具备 Python 抓数能力

@@ -883,7 +883,7 @@
     b.textContent = '抓取中…';
     let done = false;
 
-    // 1) 先试服务端全量抓取：本机跑 Node 且装了 akshare 时走这条，能抓到全部 43 条
+    // 1) 先试服务端全量抓取：本机跑 Node 且装了 akshare 时走这条，能抓到全部序列
     try {
       let j = {};
       try {

@@ -107,7 +107,7 @@ DNS 托管在 DNSPod 的话可以装 `certbot-dns-dnspod`，让续期也全自�
 | 入口 | nginx 443（HTTPS）→ 8080；80 整站 301 到 443；用 IP 访问也跳到域名 |
 | 证书 | Let's Encrypt，`/etc/letsencrypt/live/doreenboard.online/`，到期 2027-02-25，自动续期 |
 | Python | `/opt/macro-board/venv`，`akshare==1.18.60` |
-| 数据 | 43 条序列，最近交易日以页面顶部标注为准 |
+| 数据 | 45 条序列，最近交易日以页面顶部标注为准 |
 
 运维命令：
 
@@ -222,21 +222,58 @@ preview/          夜间 / 日间整页预览图
 | --- | --- | --- |
 | 沪深 300 / 上证 / 深证 | 东财 `index_zh_a_hist` | 可用（15:00 后即有） |
 | 指数（旧） | 新浪 `stock_zh_index_daily`、腾讯 `stock_zh_index_daily_tx` | **不可用**，要等到晚上或次日 |
+| 中证指数官网 | `csindex-home/perf/index-perf` | **不可用**，官方也是 T-1（17:00 查仍只有昨日） |
 | 螺纹钢 / 原油 | 新浪 `futures_main_sina` | 日线不可用，当日由 `hq.sinajs.cn` 实时价补齐 |
-| 中债 10Y | `bond_zh_us_rate` | 当晚更新 |
-| 美债 10Y / 中美利差 | `bond_zh_us_rate` | 美债 T+1，通常滞后一天以上 |
+| 中债 10Y | `bond_china_yield` | 当晚更新 |
+| 美债 2Y / 10Y / 30Y | 美国财政部官方 CSV（默认）或 Tushare `us_tycr` | T+1，属美方发布节奏，任何源都一样 |
+| 中美利差 | 上面两条曲线按共同交易日相减 | 跟随较早的那条（美债） |
 | SHIBOR / USDCNY | 各自接口 | 可用 |
 
-两个容易误判的点：
+三个容易误判的点：
 
 1. **成交额曾被算错**。旧版用腾讯日线的 `amount` 字段，那其实是**成交量（手）**，乘 `1e3/1e8` 出来的「亿元」并不成立。
    现已改成东财的真实成交额，历史值随之整体上移（如 11-26 从 9988 变为 13174 亿元），属口径修正而非数据突变。
 2. **抓取时间不等于数据日期**。盘中抓数只能拿到昨日收盘；收盘后要等日线接口更新。
    服务因此在 15:00–16:30 设了「收盘补抓」窗口（阈值压到 30 分钟），确保当天收盘尽快进库。
+3. **官方源不一定更快**。中证指数官网是权威口径，但更新比东财慢一天，所以它只用来做校验，不用来取数。
+
+## 交叉校验
+
+每次抓数后会拿中证指数官网的官方收盘价，和我们入库的沪深 300 比对同一交易日：
+
+```
+/api/status → checks.csindex = { ok: true, date: "20261126",
+                                 official: 3900.55, local: 3900.55, diff_pct: 0 }
+```
+
+偏差超过 0.05% 会写进 `errors`，抓数日志里也能看到。校验失败不影响出数，
+但如果哪天东财的口径变了，这里会先报警。
+
+## Tushare（可选增强）
+
+代码里留了一个可选层：**有 token 就用 Tushare 取美债曲线，没有就自动走美国财政部官方 CSV**。
+好处是 Tushare 的字段名稳定，不会像 akshare 那样被上游改接口名坑到。
+
+启用方式（免费，120 积分够用）：
+
+```bash
+# 1. tushare.pro 注册，个人主页拿 token（注册即送 120 积分）
+# 2. 存到服务器，二选一
+echo '你的token' | sudo tee /opt/macro-board/.tushare_token > /dev/null
+# 或者写进 systemd 环境变量 TUSHARE_TOKEN
+sudo systemctl restart macro-board
+```
+
+验证是否生效：`curl -s 127.0.0.1:8080/api/status | grep us_treasury`，
+显示 `"Tushare us_tycr"` 即已切换到 Tushare，显示 `"美国财政部收益率曲线"` 说明仍在用官方源。
+
+积分档位参考：120 分（注册即得）可调 `us_tycr`、`shibor`、`shibor_lpr`；
+600 分可调 `cn_cpi`、`cn_ppi`、`cn_gdp`、`cn_m`；`cn_pmi` 需 2000 分（约 200 元/年）。
 
 
 仍缺接口（页脚列出）：财政支出 / 专项债、MLF 与存准、公开市场净投放、DXY、VIX。
-这几项 akshare 无稳定来源，建议接 Wind / FRED 后再补，当前如实标注「待接入」。
+这几项 akshare 无稳定来源，建议接 Wind 或 Tushare 高阶权限后再补，当前如实标注「待接入」。
+（FRED 虽然免费且覆盖全，但国内服务器直连超时，实测不可用。）
 
 ## 定时轮询（Polling）
 
@@ -265,11 +302,11 @@ preview/          夜间 / 日间整页预览图
 
 「刷新数据」按钮分两级，按环境自动降级：
 
-1. 先试服务端 `/api/refresh`——轻量服务器上装了 akshare，走这条能全量抓 43 条
+1. 先试服务端 `/api/refresh`——轻量服务器上装了 akshare，走这条能全量抓 45 条
 2. 服务端不可用（GitHub Pages 这类纯静态托管，没有 Python），转由浏览器直连公开行情接口
    （`public/live.js`），不需要 Python、不需要 key、不需要代理
 
-**服务端能刷的**：全部 43 条，和定时抓数是同一套 `fetch_data.py`，口径完全一致。
+**服务端能刷的**：全部 45 条，和定时抓数是同一套 `fetch_data.py`，口径完全一致。
 
 **浏览器兜底能刷的**
 

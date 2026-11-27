@@ -4,7 +4,7 @@ akshare 取数 → 六维指标 + 宏观因子 + 时序序列 → data.json
 原则：每个数据集只拉一次，同时产出「当前读数」与「走势序列」；
 取不到真实数据的一律标 pending，绝不填估计值。
 """
-import json, os, re, time, traceback, urllib.request
+import json, os, re, time, traceback, io, urllib.request
 from datetime import datetime, timedelta
 import akshare as ak
 import pandas as pd
@@ -15,8 +15,44 @@ OUT = os.path.join(BASE, "data.json")
 TODAY = datetime.now()
 
 data = {"updated_at": TODAY.strftime("%Y-%m-%d %H:%M:%S"),
-        "errors": [], "dims": {}, "factors": {}, "cards": [], "series": {}}
+        "errors": [], "dims": {}, "factors": {}, "cards": [], "series": {},
+        "sources": {}, "checks": {}}
 SER = data["series"]
+
+UA = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120 Safari/537.36"
+
+
+def http_get(url, referer=None, timeout=15):
+    headers = {"User-Agent": UA}
+    if referer:
+        headers["Referer"] = referer
+    return urllib.request.urlopen(
+        urllib.request.Request(url, headers=headers), timeout=timeout).read()
+
+
+# ---- Tushare（可选增强）------------------------------------------------
+# 有 token 就用它取美债曲线（字段规范，不怕上游接口改名）；没有则自动走官方源。
+# 获取方式：tushare.pro 注册即送 120 积分，足够 us_tycr / shibor。
+TS_TOKEN = os.environ.get("TUSHARE_TOKEN", "").strip()
+if not TS_TOKEN:
+    for _p in (os.path.join(BASE, ".tushare_token"),
+               os.path.expanduser("~/.tushare_token")):
+        try:
+            if os.path.exists(_p):
+                TS_TOKEN = open(_p).read().strip()
+                break
+        except Exception:
+            pass
+TS = None
+if TS_TOKEN:
+    try:
+        import tushare as _ts
+        _ts.set_token(TS_TOKEN)
+        TS = _ts.pro_api()
+        print("[info] Tushare 已启用")
+    except Exception as _e:
+        print("[warn] Tushare 初始化失败，回退官方源：" + str(_e)[:80])
+
 
 
 # ---------------------------------------------------------------------
@@ -135,11 +171,14 @@ def em_index(code, days=1200):
 
 def get_hs():
     try:
-        return em_index("000300", 900)
+        df = em_index("000300", 900)
+        data["sources"]["index_daily"] = "东方财富 index_zh_a_hist"
+        return df
     except Exception as e:
         print("[warn] 东财指数接口失败，回退新浪：" + str(e)[:80])
         df = ak.stock_zh_index_daily(symbol="sh000300")
         df["date"] = pd.to_datetime(df["date"])
+        data["sources"]["index_daily"] = "新浪 stock_zh_index_daily（回退，当日不可用）"
         return df.sort_values("date").reset_index(drop=True)
 
 
@@ -441,30 +480,64 @@ r = block("usdcny", boc_block)
 ext["highfreq"].append(r if r else pending("USD/CNY 接口不可用"))
 
 
+def _us_curve_treasury():
+    """美国财政部官方日频收益率曲线（国内可达、无需 key）。"""
+    frames = []
+    for y in (TODAY.year - 1, TODAY.year):
+        url = ("https://home.treasury.gov/resource-center/data-chart-center/interest-rates/"
+               f"daily-treasury-rates.csv/{y}/all?type=daily_treasury_yield_curve"
+               f"&field_tdr_date_value={y}&page&_format=csv")
+        txt = http_get(url).decode("utf-8", "ignore")
+        frames.append(pd.read_csv(io.StringIO(txt)))
+    df = pd.concat(frames).drop_duplicates(subset=["Date"])
+    df["Date"] = pd.to_datetime(df["Date"], format="%m/%d/%Y")
+    out = pd.DataFrame({"date": df["Date"]})
+    for col, name in [("2 Yr", "y2"), ("10 Yr", "y10"), ("30 Yr", "y30")]:
+        out[name] = pd.to_numeric(df[col], errors="coerce").values
+    return out.dropna(subset=["y10"]).sort_values("date").reset_index(drop=True)
+
+
+def _us_curve_tushare():
+    """同样的曲线，走 Tushare us_tycr（120 积分即可）。"""
+    df = TS.us_tycr(start_date="20230101", end_date=TODAY.strftime("%Y%m%d"))
+    df = df.rename(columns={"date": "date", "y2": "y2", "y10": "y10", "y30": "y30"})
+    df["date"] = pd.to_datetime(df["date"])
+    for c in ("y2", "y10", "y30"):
+        df[c] = pd.to_numeric(df[c], errors="coerce")
+    return df[["date", "y2", "y10", "y30"]].dropna(subset=["y10"]).sort_values("date").reset_index(drop=True)
+
+
 def usrate_block():
-    df = ak.bond_zh_us_rate(start_date="20230101")
-    df["日期"] = pd.to_datetime(df["日期"])
-    df = df.dropna(subset=["美国国债收益率10年", "中国国债收益率10年"]).sort_values("日期")
-    df = df.reset_index(drop=True)
-    spread = df["中国国债收益率10年"].astype(float) - df["美国国债收益率10年"].astype(float)
+    """美债曲线。中美国债利差需要中债同日数据，在 yield_block 之后由 fill_cnus10 补算。"""
+    df, src = None, ""
+    if TS is not None:
+        try:
+            df, src = _us_curve_tushare(), "Tushare us_tycr"
+        except Exception as e:
+            print("[warn] Tushare 美债失败，回退财政部：" + str(e)[:70])
+    if df is None or not len(df):
+        df, src = _us_curve_treasury(), "美国财政部收益率曲线"
+    data["sources"]["us_treasury"] = src
+
     days = min(250, len(df))
-    put("us10y", [dlab(x) for x in df["日期"].tail(days)],
-        df["美国国债收益率10年"].tail(days), unit="%", freq="D", keep=250)
-    put("cnus10", [dlab(x) for x in df["日期"].tail(days)], spread.tail(days),
-        unit="pct", freq="D", keep=250)
+    tail = df.tail(days)
+    labels = [dlab(x) for x in tail["date"]]
+    put("us10y", labels, tail["y10"], unit="%", freq="D", nd=2, keep=250)
+    put("us2y", labels, tail["y2"], unit="%", freq="D", nd=2, keep=250)
+    put("us30y", labels, tail["y30"], unit="%", freq="D", nd=2, keep=250)
+
     last = df.iloc[-1]
-    us, cn = float(last["美国国债收益率10年"]), float(last["中国国债收益率10年"])
-    sp = cn - us
-    return {"name": "美债 10Y / 中美利差", "date": dlab(last["日期"]),
-            "us10y": round(us, 2), "cn10": round(cn, 2), "cnus10": round(sp, 2),
-            "read": ("中美利差深度倒挂，汇率与外资流入承压" if sp < -0.8 else
-                     "中美利差小幅倒挂，外部约束偏弱" if sp < 0 else
-                     "中美利差为正，汇率压力较小"),
-            "src": "中债 / 美债收益率曲线"}
+    y2, y10, y30 = float(last["y2"]), float(last["y10"]), float(last["y30"])
+    return {"name": "美债 10Y / 中美利差", "date": dlab(last["date"]),
+            "us10y": round(y10, 2), "curve_2s10s": round(y10 - y2, 2),
+            "curve_10s30s": round(y30 - y10, 2),
+            "read": ("美债曲线倒挂，衰退预期偏强" if y10 - y2 < 0 else
+                     "美债曲线陡化，财政与通胀溢价上升" if y10 - y2 > 1 else "美债曲线形态中性"),
+            "src": src}
 
 
-r = block("usrate", usrate_block)
-ext["highfreq"].append(r if r else pending("中美国债收益率接口不可用"))
+US_ROW = block("usrate", usrate_block)
+ext["highfreq"].append(US_ROW if US_ROW else pending("美债收益率接口不可用"))
 data["dims"]["external"] = ext
 time.sleep(1)
 
@@ -555,6 +628,31 @@ def yield_block():
 
 Y = block("yields", yield_block) or {}
 data["factors"]["yields"] = Y
+
+
+def fill_cnus10():
+    """中债 10Y − 美债 10Y。两条曲线各自独立取数后按共同交易日对齐，
+    避免旧写法里 dropna 把「中债已出、美债未出」的那天整行删掉。"""
+    cn = {d: v for d, v in (SER.get("y10", {}).get("points") or [])}
+    us = {d: v for d, v in (SER.get("us10y", {}).get("points") or [])}
+    common = sorted(set(cn) & set(us))
+    if not common:
+        data["errors"].append("中美国债利差：两条曲线无共同交易日")
+        return
+    rows = [(d, round(cn[d] - us[d], 2)) for d in common]
+    put("cnus10", [d for d, _ in rows], [s for _, s in rows], unit="pct", freq="D", nd=2, keep=250)
+    d0, sp = rows[-1]
+    if isinstance(US_ROW, dict):
+        US_ROW.setdefault("curve_read", US_ROW.get("read"))
+        US_ROW["cnus10"] = sp
+        US_ROW["cn10"] = round(cn[d0], 3)
+        US_ROW["cnus_date"] = d0
+        US_ROW["read"] = ("中美利差深度倒挂，汇率与外资流入承压" if sp < -0.8 else
+                          "中美利差小幅倒挂，外部约束偏弱" if sp < 0 else
+                          "中美利差为正，汇率压力较小")
+
+
+fill_cnus10()
 time.sleep(1)
 
 # ---- 财政维度（正式：财政收入；高频：超长端利差＝政府债供给压力代理）----
@@ -1191,7 +1289,40 @@ data["cards"] = [
 ]
 
 # =====================================================================
-# 11. 序列清理 + 落盘
+# 11. 交叉校验：拿中证指数官网的官方收盘价核对入库的沪深 300
+# =====================================================================
+def verify_csindex():
+    """官方源是 T-1 更新，所以比对的是「最近共同交易日」，不是最新交易日。
+    偏差超过 0.05% 说明我们入库的价格有问题，写进 checks 供 /api/status 暴露。"""
+    try:
+        start = (TODAY - timedelta(days=12)).strftime("%Y%m%d")
+        url = ("https://www.csindex.com.cn/csindex-home/perf/index-perf"
+               f"?indexCode=000300&startDate={start}&endDate={TODAY.strftime('%Y%m%d')}")
+        rows = (json.loads(http_get(url, referer="https://www.csindex.com.cn/")) or {}).get("data") or []
+        if not rows:
+            return {"ok": None, "note": "中证官网未返回数据"}
+        off = {r["tradeDate"]: r["close"] for r in rows if r.get("tradeDate")}
+        ours = {d.replace("-", ""): v for d, v in (SER.get("hs300", {}).get("points") or [])}
+        common = sorted(set(off) & set(ours))
+        if not common:
+            return {"ok": None, "note": "与官方无共同交易日"}
+        d0 = common[-1]
+        a, b = float(off[d0]), float(ours[d0])
+        diff = abs(a - b) / b * 100 if b else None
+        return {"ok": diff is not None and diff <= 0.05, "date": d0,
+                "official": round(a, 2), "local": round(b, 2),
+                "diff_pct": round(diff, 4) if diff is not None else None}
+    except Exception as e:
+        return {"ok": None, "note": "校验失败：" + str(e)[:80]}
+
+
+data["checks"]["csindex"] = verify_csindex()
+if data["checks"]["csindex"].get("ok") is False:
+    data["errors"].append("沪深 300 与中证官网偏差超阈值：" +
+                          json.dumps(data["checks"]["csindex"], ensure_ascii=False))
+
+# =====================================================================
+# 12. 序列清理 + 落盘
 # =====================================================================
 SER.pop("__", None)
 for k in list(SER.keys()):
