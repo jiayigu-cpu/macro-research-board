@@ -4,7 +4,7 @@ akshare 取数 → 六维指标 + 宏观因子 + 时序序列 → data.json
 原则：每个数据集只拉一次，同时产出「当前读数」与「走势序列」；
 取不到真实数据的一律标 pending，绝不填估计值。
 """
-import json, os, re, time, traceback
+import json, os, re, time, traceback, urllib.request
 from datetime import datetime, timedelta
 import akshare as ak
 import pandas as pd
@@ -43,6 +43,37 @@ def pctile(series, value, window=None):
     if len(s) < 30 or value is None or pd.isna(value):
         return None
     return round(float((s <= value).mean()), 4)
+
+
+def spot_future(code):
+    """新浪期货实时行情 → (日期, 最新价)。日线接口收盘后不更新，用实时值补当日 bar。"""
+    try:
+        req = urllib.request.Request(
+            "https://hq.sinajs.cn/list=" + code,
+            headers={"User-Agent": "Mozilla/5.0",
+                     "Referer": "https://finance.sina.com.cn"})
+        raw = urllib.request.urlopen(req, timeout=8).read().decode("gbk", "ignore")
+        f = raw.split('"')[1].split(",")
+        d, px = f[17].strip(), float(f[8])
+        if re.match(r"^\d{4}-\d{2}-\d{2}$", d) and px > 0:
+            return d, px
+    except Exception:
+        pass
+    return None
+
+
+def append_today(df, date_col, close_col, spot_code):
+    """日线缺当日、而实时行情已有当日成交价时，补一根当日 bar。"""
+    s = spot_future(spot_code)
+    if not s:
+        return df
+    d, px = s
+    if d <= pd.to_datetime(df[date_col].iloc[-1]).strftime("%Y-%m-%d"):
+        return df
+    row = {c: np.nan for c in df.columns}
+    row[date_col] = pd.Timestamp(d)
+    row[close_col] = px
+    return pd.concat([df, pd.DataFrame([row])], ignore_index=True)
 
 
 def put(key, labels, values, unit="", freq="D", nd=2, keep=260):
@@ -91,10 +122,25 @@ def pending(note):
 # =====================================================================
 # 0. 交易日基准
 # =====================================================================
-def get_hs():
-    df = ak.stock_zh_index_daily(symbol="sh000300")
+def em_index(code, days=1200):
+    """东财指数日线。相比新浪/腾讯日线，东财在收盘后即可返回当日 bar。"""
+    start = (TODAY - timedelta(days=days)).strftime("%Y%m%d")
+    df = ak.index_zh_a_hist(symbol=code, period="daily", start_date=start)
+    df = df.rename(columns={"日期": "date", "开盘": "open", "收盘": "close",
+                            "最高": "high", "最低": "low",
+                            "成交量": "volume", "成交额": "amount"})
     df["date"] = pd.to_datetime(df["date"])
     return df.sort_values("date").reset_index(drop=True)
+
+
+def get_hs():
+    try:
+        return em_index("000300", 900)
+    except Exception as e:
+        print("[warn] 东财指数接口失败，回退新浪：" + str(e)[:80])
+        df = ak.stock_zh_index_daily(symbol="sh000300")
+        df["date"] = pd.to_datetime(df["date"])
+        return df.sort_values("date").reset_index(drop=True)
 
 
 HS = block("hs300_index", get_hs)
@@ -153,6 +199,7 @@ def rb_block():
     df = ak.futures_main_sina(symbol="RB0")
     df["日期"] = pd.to_datetime(df["日期"])
     df = df.sort_values("日期").reset_index(drop=True)
+    df = append_today(df, "日期", "收盘价", "nf_RB0")
     c = df["收盘价"].astype(float)
     ma60 = c.rolling(60).mean()
     last = df.iloc[-1]
@@ -167,7 +214,7 @@ def rb_block():
             "chg_20d_pct": round((v / float(c.iloc[-21]) - 1) * 100, 1),
             "vs_ma60": round((v / float(ma60.iloc[-1]) - 1) * 100, 1),
             "read": "强于 60 日均线" if v >= ma60.iloc[-1] else "弱于 60 日均线",
-            "src": "新浪期货"}
+            "src": "新浪期货 + 当日实时补价"}
 
 
 r = block("rb", rb_block)
@@ -222,6 +269,7 @@ def sc_block():
     df = ak.futures_main_sina(symbol="SC0")
     df["日期"] = pd.to_datetime(df["日期"])
     df = df.sort_values("日期").reset_index(drop=True)
+    df = append_today(df, "日期", "收盘价", "nf_SC0")
     c = df["收盘价"].astype(float)
     days = min(250, len(df))
     put("sc", [dlab(x) for x in df["日期"].tail(days)], c.tail(days),
@@ -230,7 +278,7 @@ def sc_block():
     chg = round((v / float(c.iloc[-21]) - 1) * 100, 1)
     return {"name": "INE 原油主力", "date": dlab(df.iloc[-1]["日期"]),
             "value": round(v, 1), "unit": "元/桶", "chg_20d_pct": chg,
-            "read": "油价走强" if chg > 0 else "油价走弱", "src": "新浪期货"}
+            "read": "油价走强" if chg > 0 else "油价走弱", "src": "新浪期货 + 当日实时补价"}
 
 
 r = block("sc", sc_block)
@@ -596,18 +644,17 @@ time.sleep(1)
 
 
 def turnover_block():
-    sh = ak.stock_zh_index_daily_tx(symbol="sh000001")
-    sz = ak.stock_zh_index_daily_tx(symbol="sz399001")
-    sh["date"] = pd.to_datetime(sh["date"]); sz["date"] = pd.to_datetime(sz["date"])
-    m = pd.merge(sh[["date", "amount"]], sz[["date", "amount"]], on="date", suffixes=("_sh", "_sz"))
+    # 成交额直接用东财「成交额」字段（单位：元）。
+    # 旧版用腾讯日线的 amount 字段，那是成交量（手），换算出的「亿元」口径不准，且当天不更新。
+    sh = em_index("000001")[["date", "amount"]]
+    sz = em_index("399001")[["date", "amount"]]
+    m = pd.merge(sh, sz, on="date", suffixes=("_sh", "_sz"))
     m = m.dropna().sort_values("date").reset_index(drop=True)
-    amt = (m["amount_sh"].astype(float) + m["amount_sz"].astype(float)) * 1e3 / 1e8
+    amt = (m["amount_sh"].astype(float) + m["amount_sz"].astype(float)) / 1e8
     ma20 = amt.rolling(20).mean()
     # 换手集中度：沪深 300 成交额占两市比重（大盘拥挤 / 抱团程度代理）
-    hs3 = ak.stock_zh_index_daily_tx(symbol="sh000300")
-    hs3["date"] = pd.to_datetime(hs3["date"])
-    h3 = hs3[["date", "amount"]].copy()
-    h3["a3"] = h3["amount"].astype(float) * 1e3 / 1e8
+    h3 = em_index("000300")[["date", "amount"]]
+    h3["a3"] = h3["amount"].astype(float) / 1e8
     a3 = h3.set_index("date")["a3"].reindex(m["date"]).ffill()
     conc = pd.Series(a3.values / amt.values * 100, index=m.index).dropna()
     tailc = conc.tail(250)
@@ -626,7 +673,7 @@ def turnover_block():
             "ma20_pctile_3y": pctile(amt.tail(750), float(ma20.iloc[-1])),
             "conc_pct": round(conc_now, 1) if conc_now is not None else None,
             "conc_pctile_3y": conc_pct,
-            "src": "腾讯财经 / 中证指数"}
+            "src": "东方财富 / 中证指数"}
 
 
 TO = block("turnover", turnover_block) or {}

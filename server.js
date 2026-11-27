@@ -233,10 +233,14 @@ function tick() {
   const now = new Date();
   const wd = now.getDay();
   const hm = now.getHours() * 100 + now.getMinutes();
-  // 交易时段（工作日 09:00-15:30）要求更勤，其余时段放宽
-  const inSession = wd >= 1 && wd <= 5 && hm >= 900 && hm <= 1530;
-  const limit = inSession ? 2 : STALE_HOURS;
-  if (age > limit) autoFetch('数据已过期 ' + age.toFixed(1) + 'h');
+  const weekday = wd >= 1 && wd <= 5;
+  // 交易时段（工作日 09:00-15:00）要求更勤
+  const inSession = weekday && hm >= 900 && hm <= 1500;
+  // 收盘后 15:00-16:30 是「取当日收盘」的窗口，必须尽快抓一次
+  const justClosed = weekday && hm > 1500 && hm <= 1630;
+  let limit = inSession ? 2 : STALE_HOURS;
+  if (justClosed) limit = 0.5;
+  if (age > limit) autoFetch('数据已过期 ' + age.toFixed(1) + 'h' + (justClosed ? '（收盘补抓）' : ''));
 }
 
 server.listen(PORT, HOST, () => {
@@ -252,6 +256,6 @@ server.listen(PORT, HOST, () => {
   } else if (AUTO_FETCH) {
     console.log('现有快照 ' + dataAgeHours().toFixed(1) + 'h 前，先提供服务，后台按需补抓');
     setTimeout(tick, 3000);
-    setInterval(tick, 3600 * 1000);
+    setInterval(tick, 10 * 60 * 1000);
   }
 });
