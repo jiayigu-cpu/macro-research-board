@@ -4,11 +4,42 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>宏观量化看板 · 周期定位与资产配置</title>
-<link rel="stylesheet" href="styles.css?v=5.1">
+<link rel="stylesheet" href="styles.css?v=5.2">
 </head>
 <body>
 
 <!-- 背景装饰层：极简网点 + 星座式连线，只做气氛，不抢数据 -->
+<!-- 左侧固定导航：图标 + 短标签，滚动联动高亮 -->
+<nav class="rail" id="rail" aria-label="模块导航">
+  <a class="rbrand" href="#topcards" aria-label="回到顶部">
+    <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2.6l7.4 4.3v10.2L12 21.4 4.6 17.1V6.9z"/><path d="M12 2.6v18.8M4.6 6.9l7.4 4.4 7.4-4.4"/></svg>
+  </a>
+  <a class="rnav on" href="#topcards" data-t="mv" title="结论概览">
+    <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3.2" y="3.2" width="7.2" height="7.2" rx="1.6"/><rect x="13.6" y="3.2" width="7.2" height="7.2" rx="1.6"/><rect x="3.2" y="13.6" width="7.2" height="7.2" rx="1.6"/><rect x="13.6" y="13.6" width="7.2" height="7.2" rx="1.6"/></svg>
+    <span>概览</span>
+  </a>
+  <a class="rnav" href="#m1" data-t="m1" title="01 指标体系">
+    <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 20.4V10.2M12 20.4V3.6M19 20.4v-6.4"/><path d="M3 20.4h18"/></svg>
+    <span>指标</span>
+  </a>
+  <a class="rnav" href="#m2" data-t="m2" title="02 周期定位">
+    <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="8.4"/><path d="M12 7.2V12l3.4 2.1"/></svg>
+    <span>周期</span>
+  </a>
+  <a class="rnav" href="#m3" data-t="m3" title="03 政策互动">
+    <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5.4 3.6h9l4.2 4.2v12.6H5.4z"/><path d="M14 3.6v4.4h4.4"/><path d="M8.4 12h7.2M8.4 15.6h4.6"/></svg>
+    <span>政策</span>
+  </a>
+  <a class="rnav" href="#m4" data-t="m4" title="04 资产配置">
+    <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="8.4"/><path d="M12 3.6V12h8.4"/></svg>
+    <span>配置</span>
+  </a>
+  <a class="rnav" href="#m5" data-t="m5" title="05 行业择时">
+    <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3.6 17.4l5.2-5.2 3.8 3 7.8-8.4"/><path d="M15.4 6.8h4.8v4.8"/></svg>
+    <span>行业</span>
+  </a>
+</nav>
+
 <div class="bgfx fx" aria-hidden="true"><svg viewBox="0 0 1600 1040" preserveAspectRatio="xMidYMid slice"><path class="ln" d="M85 257 L156 229 M156 229 L94 266 M94 266 L45 243 M45 243 L112 327 M112 327 L32 181 M32 181 L31 332 M85 257 L32 181"/><circle class="ring" cx="45" cy="243" r="16"/><circle class="ring" cx="32" cy="181" r="18"/><circle class="nd" cx="85" cy="257" r="1.8"/><circle class="nd" cx="156" cy="229" r="1.6"/><circle class="nd" cx="94" cy="266" r="1.6"/><circle class="nd" cx="45" cy="243" r="1.6"/><circle class="nd" cx="112" cy="327" r="1.6"/><circle class="nd" cx="32" cy="181" r="1.8"/><circle class="nd" cx="31" cy="332" r="1.8"/><path class="ln" d="M56 739 L115 791 M115 791 L46 593 M46 593 L40 592 M40 592 L122 561 M122 561 L94 588 M46 593 L115 791"/><circle class="ring" cx="94" cy="588" r="18"/><circle class="ring" cx="56" cy="739" r="13"/><circle class="nd" cx="56" cy="739" r="1.8"/><circle class="nd" cx="115" cy="791" r="1.6"/><circle class="nd" cx="46" cy="593" r="2"/><circle class="nd" cx="40" cy="592" r="2.4"/><circle class="nd" cx="122" cy="561" r="2.4"/><circle class="nd" cx="94" cy="588" r="1.8"/><path class="ln" d="M1503 372 L1573 216 M1573 216 L1542 341 M1542 341 L1525 163 M1525 163 L1424 245 M1424 245 L1539 205 M1539 205 L1500 225 M1525 163 L1542 341"/><circle class="ring" cx="1424" cy="245" r="9"/><circle class="ring" cx="1573" cy="216" r="12"/><circle class="nd" cx="1503" cy="372" r="1.8"/><circle class="nd" cx="1573" cy="216" r="1.8"/><circle class="nd" cx="1542" cy="341" r="2"/><circle class="nd" cx="1525" cy="163" r="1.6"/><circle class="nd" cx="1424" cy="245" r="1.6"/><circle class="nd" cx="1539" cy="205" r="2"/><circle class="nd" cx="1500" cy="225" r="2.4"/><path class="ln" d="M1531 819 L1508 728 M1508 728 L1489 888 M1489 888 L1473 608 M1473 608 L1469 645 M1469 645 L1479 648 M1531 819 L1473 608 M1489 888 L1508 728"/><circle class="ring" cx="1469" cy="645" r="18"/><circle class="nd" cx="1531" cy="819" r="1.8"/><circle class="nd" cx="1508" cy="728" r="1.8"/><circle class="nd" cx="1489" cy="888" r="2"/><circle class="nd" cx="1473" cy="608" r="1.6"/><circle class="nd" cx="1469" cy="645" r="1.6"/><circle class="nd" cx="1479" cy="648" r="2.4"/></svg></div>
 
 <div class="top">
@@ -35,7 +66,7 @@
   <div class="fxband tape fx" aria-hidden="true"><svg viewBox="0 0 1400 36" preserveAspectRatio="xMidYMid meet"><path class="ln" d="M10 30 H1390" opacity=".07"/><line class="c-dn" x1="14" y1="8" x2="14" y2="23"/><rect class="c-dn" x="11.5" y="13" width="5" height="5" rx=".5"/><line class="c-up" x1="27" y1="5" x2="27" y2="20"/><rect class="c-up" x="24.5" y="10" width="5" height="5" rx=".5"/><line class="c-up" x1="40" y1="5" x2="40" y2="19"/><rect class="c-up" x="37.5" y="10" width="5" height="4" rx=".5"/><line class="c-dn" x1="53" y1="8" x2="53" y2="23"/><rect class="c-dn" x="50.5" y="13" width="5" height="5" rx=".5"/><line class="c-up" x1="71" y1="10" x2="71" y2="24"/><rect class="c-up" x="68.5" y="15" width="5" height="4" rx=".5"/><line class="c-dn" x1="89" y1="12" x2="89" y2="27"/><rect class="c-dn" x="86.5" y="17" width="5" height="5" rx=".5"/><line class="c-dn" x1="102" y1="14" x2="102" y2="30"/><rect class="c-dn" x="99.5" y="19" width="5" height="6" rx=".5"/><line class="c-up" x1="115" y1="15" x2="115" y2="29"/><rect class="c-up" x="112.5" y="20" width="5" height="4" rx=".5"/><line class="c-dn" x1="133" y1="14" x2="133" y2="31"/><rect class="c-dn" x="130.5" y="19" width="5" height="7" rx=".5"/><line class="c-up" x1="151" y1="11" x2="151" y2="25"/><rect class="c-up" x="148.5" y="16" width="5" height="4" rx=".5"/><line class="c-up" x1="169" y1="13" x2="169" y2="29"/><rect class="c-up" x="166.5" y="18" width="5" height="6" rx=".5"/><line class="c-dn" x1="187" y1="11" x2="187" y2="24"/><rect class="c-dn" x="184.5" y="16" width="5" height="3" rx=".5"/><line class="c-dn" x1="200" y1="8" x2="200" y2="21"/><rect class="c-dn" x="197.5" y="13" width="5" height="3" rx=".5"/><line class="c-up" x1="213" y1="6" x2="213" y2="22"/><rect class="c-up" x="210.5" y="11" width="5" height="6" rx=".5"/></svg></div>
 
   <!-- ================= 01 指标体系 ================= -->
-  <section class="part">
+  <section class="part" id="m1">
     <div class="phead">
       <div class="pno">01</div>
       <div class="ptxt">
@@ -49,7 +80,7 @@
   </section>
 
   <!-- ================= 02 周期定位 ================= -->
-  <section class="part">
+  <section class="part" id="m2">
     <div class="phead">
       <div class="pno">02</div>
       <div class="ptxt">
@@ -81,7 +112,7 @@
   </section>
 
   <!-- ================= 03 政策互动 ================= -->
-  <section class="part">
+  <section class="part" id="m3">
     <div class="phead">
       <div class="pno">03</div>
       <div class="ptxt">
@@ -119,7 +150,7 @@
   </section>
 
   <!-- ================= 04 资产配置 ================= -->
-  <section class="part">
+  <section class="part" id="m4">
     <div class="phead">
       <div class="pno">04</div>
       <div class="ptxt">
@@ -159,7 +190,7 @@
   </section>
 
   <!-- ================= 05 行业择时 ================= -->
-  <section class="part">
+  <section class="part" id="m5">
     <div class="phead">
       <div class="pno">05</div>
       <div class="ptxt">
@@ -242,6 +273,6 @@
 <script src="config.js?v=5.1"></script>
 <script src="charts.js?v=3.4"></script>
 <script src="live.js?v=3.4"></script>
-<script src="app.js?v=5.2"></script>
+<script src="app.js?v=5.4"></script>
 </body>
 </html>

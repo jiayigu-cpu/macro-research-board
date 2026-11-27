@@ -1155,6 +1155,40 @@
     $('#foot-pending').innerHTML = pend.length ? pend.slice(0, 6).map(function (x) { return '· ' + x; }).join('<br>') : '无';
   }
 
+  /* ---------------- 左侧导航：滚动联动高亮 ---------------- */
+  function initRail() {
+    const rail = $('#rail');
+    if (!rail) return;
+    const links = $$('.rnav', rail);
+    if (!links.length) return;
+    const targets = links.map(function (a) {
+      return document.getElementById(String(a.getAttribute('href') || '').slice(1));
+    });
+    let lock = 0;   // 点击后平滑滚动期间，不让滚动联动把高亮抢回去
+    const setOn = function (i) { links.forEach(function (a, j) { a.classList.toggle('on', j === i); }); };
+    links.forEach(function (a, i) {
+      a.addEventListener('click', function () { setOn(i); lock = Date.now() + 800; });
+    });
+    const pick = function () {
+      if (Date.now() < lock) return;
+      if (window.scrollY <= 4) { setOn(0); return; }   // 停在顶部一律算「概览」
+      const line = window.innerHeight * 0.34;
+      let idx = 0;
+      targets.forEach(function (t, i) {
+        if (t && t.getBoundingClientRect().top <= line) idx = i;
+      });
+      if (window.innerHeight + window.scrollY >= document.documentElement.scrollHeight - 6) idx = links.length - 1;
+      setOn(idx);
+    };
+    let raf = 0;
+    window.addEventListener('scroll', function () {
+      if (raf) return;
+      raf = requestAnimationFrame(function () { raf = 0; pick(); });
+    }, { passive: true });
+    window.addEventListener('resize', pick);
+    pick();
+  }
+
   /* ---------------- 主题 ---------------- */
   function applyTheme(t) {
     document.documentElement.setAttribute('data-theme', t);
@@ -1363,6 +1397,7 @@
       rt = setTimeout(function () { if (DATA) { renderCube(); renderPolicy(); renderErp(); } }, 180);
     });
 
+    initRail();
     poll(true);
   }
 

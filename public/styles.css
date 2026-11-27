@@ -1158,3 +1158,89 @@ html[data-theme="light"] .tool { background: #fff; }
 .tstate.ok { color: var(--accent); }
 .tstate.bad { color: var(--up); }
 .ltag.hot { color: var(--up); border-color: color-mix(in srgb, var(--up) 34%, transparent); background: var(--up-soft); }
+
+/* ============================================================
+   左侧固定导航（v5.2）
+   图标 + 短标签常显，当前模块高亮；窄屏自动收起为顶部横条
+   ============================================================ */
+:root { --rail: 84px; }
+
+body { padding-left: var(--rail); }
+section[id] { scroll-margin-top: 68px; }
+html { scroll-behavior: smooth; }
+@media (prefers-reduced-motion: reduce) { html { scroll-behavior: auto; } }
+
+.rail {
+  position: fixed; left: 0; top: 0; bottom: 0; width: var(--rail); z-index: 60;
+  display: flex; flex-direction: column; align-items: stretch; gap: 2px;
+  padding: 12px 9px 16px;
+  background: color-mix(in srgb, var(--bg) 84%, transparent);
+  backdrop-filter: blur(18px) saturate(170%);
+  border-right: 1px solid var(--line);
+}
+.rail::after {
+  content: ""; position: absolute; right: -1px; top: 0; bottom: 0; width: 1px;
+  background: linear-gradient(180deg, transparent, rgba(47, 189, 176, .34) 18%, rgba(69, 198, 224, .22) 64%, transparent);
+  opacity: .7; pointer-events: none;
+}
+
+/* 品牌小标：立方体 */
+.rail .rbrand {
+  display: grid; place-items: center; height: 46px; margin-bottom: 8px;
+  border-radius: 10px; color: var(--accent); opacity: .9;
+  border: 1px solid color-mix(in srgb, var(--accent) 22%, transparent);
+  background: color-mix(in srgb, var(--accent) 7%, transparent);
+}
+.rail .rbrand svg { width: 20px; height: 20px; fill: none; stroke: currentColor; stroke-width: 1.3; stroke-linejoin: round; }
+.rail .rbrand:hover { opacity: 1; }
+
+/* 导航项 */
+.rail .rnav {
+  position: relative;
+  display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 5px;
+  padding: 10px 2px 9px; border-radius: 10px;
+  color: var(--muted); text-decoration: none;
+  border: 1px solid transparent;
+  transition: color .16s ease, background .16s ease, border-color .16s ease;
+}
+.rail .rnav svg {
+  width: 19px; height: 19px; fill: none; stroke: currentColor;
+  stroke-width: 1.55; stroke-linecap: round; stroke-linejoin: round;
+}
+.rail .rnav span { font-size: 10.5px; letter-spacing: .06em; line-height: 1.2; }
+.rail .rnav:hover { color: var(--ink); background: color-mix(in srgb, var(--accent) 7%, transparent); }
+.rail .rnav:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+
+/* 选中态：底色 + 左侧亮条 + 图标加重 */
+.rail .rnav.on {
+  color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+  border-color: color-mix(in srgb, var(--accent) 24%, transparent);
+}
+.rail .rnav.on::before {
+  content: ""; position: absolute; left: -9px; top: 50%; transform: translateY(-50%);
+  width: 2px; height: 20px; border-radius: 0 2px 2px 0;
+  background: var(--accent);
+  box-shadow: 0 0 10px color-mix(in srgb, var(--accent) 62%, transparent);
+}
+.rail .rnav.on svg { stroke-width: 1.85; }
+
+/* 窄屏：侧栏收起为顶部横向胶囊条，内容不再让位 */
+@media (max-width: 900px) {
+  :root { --rail: 0px; }
+  body { padding-left: 0; padding-top: 52px; }
+  .rail {
+    left: 0; right: 0; bottom: auto; width: auto; height: 52px;
+    flex-direction: row; align-items: center; gap: 4px;
+    padding: 6px 10px; border-right: 0; border-bottom: 1px solid var(--line);
+    overflow-x: auto; overscroll-behavior-x: contain;
+  }
+  .rail::-webkit-scrollbar { height: 0; }
+  .rail::after { display: none; }
+  .rail .rbrand { height: 36px; width: 36px; margin: 0 4px 0 0; flex: 0 0 auto; }
+  .rail .rnav { flex-direction: row; gap: 5px; padding: 7px 10px; flex: 0 0 auto; }
+  .rail .rnav span { font-size: 11px; }
+  .rail .rnav.on::before { display: none; }
+  .top { top: 52px; }
+  section[id] { scroll-margin-top: 108px; }
+}
