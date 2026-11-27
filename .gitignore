@@ -13,3 +13,6 @@ server.log
 _test_data.json
 .shots/
 __pycache__/
+
+# 工作台本地记忆与自动化记录（含运维信息，不外发）
+.workbuddy/
