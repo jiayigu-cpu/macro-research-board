@@ -1181,6 +1181,319 @@ f["factor_table"] = [
 ]
 
 # =====================================================================
+# 9.5 v2 新增通道（宏观量化看板）
+# 每个通道只服务一个用途，字段名与 macro_v2.py 对齐：
+#   sf_inc      社融增量（月）      → 政策强度指数「社融脉冲」
+#   fai_yoy     固投同比（月）      → 成长/价值 9 信号之一
+#   margin_bal  两融融资余额（日）  → 仓位卡季节方向确认 + 风格资金流信号
+#   big_flow_pct 超大单净流入占比（日）→ 风格资金流信号
+#   div_yield   上证 A 股股息率（日）→ 风格「股息比」信号
+#   gold_fut    沪金主连（日）      → 趋势保护
+#   tr_*        四类资产月线        → 趋势保护（月频双均线/MACD/布林）
+#   industry    申万一级 31 行业    → 模块 5 事件库 / 拥挤度 / 生命周期
+# =====================================================================
+
+
+def sf_block():
+    """社会融资规模增量。来源：央行，月频，按月发布（通常次月 10-15 日）。"""
+    df = ak.macro_china_shrzgm()
+    df["_d"] = df["月份"].map(parse_cn)
+    df = df.dropna(subset=["_d", "社会融资规模增量"]).sort_values("_d")
+    put("sf_inc", [mlab(x) for x in df["_d"]], df["社会融资规模增量"],
+        unit="亿元", freq="M", nd=0, keep=84)
+    last = df.iloc[-1]
+    return {"name": "社会融资规模增量", "date": mlab(last["_d"]),
+            "value": round(float(last["社会融资规模增量"]), 0), "unit": "亿元",
+            "src": "中国人民银行"}
+
+
+def fai_block():
+    """固定资产投资完成额同比。来源：统计局，月频。"""
+    df = ak.macro_china_gdzctz()
+    df["_d"] = df["月份"].map(parse_cn)
+    df = df.dropna(subset=["_d", "同比增长"]).sort_values("_d")
+    put("fai_yoy", [mlab(x) for x in df["_d"]], df["同比增长"],
+        unit="%", freq="M", keep=84)
+    last = df.iloc[-1]
+    return {"name": "固定资产投资同比", "date": mlab(last["_d"]),
+            "value": round(float(last["同比增长"]), 1), "unit": "%",
+            "src": "国家统计局"}
+
+
+def margin_block():
+    """上交所融资余额（两融）。来源：上交所，日频，T+1 发布。"""
+    start = (TODAY - timedelta(days=800)).strftime("%Y%m%d")
+    df = ak.stock_margin_sse(start_date=start, end_date=TODAY.strftime("%Y%m%d"))
+    df["_d"] = pd.to_datetime(df["信用交易日期"].astype(str), format="%Y%m%d", errors="coerce")
+    df = df.dropna(subset=["_d"]).sort_values("_d")
+    v = df["融资余额"].astype(float) / 1e8
+    put("margin_bal", [dlab(x) for x in df["_d"]], v, unit="亿元", nd=0, freq="D", keep=520)
+    return {"name": "融资余额（沪市）", "date": dlab(df.iloc[-1]["_d"]),
+            "value": round(float(v.iloc[-1]), 0), "unit": "亿元", "src": "上海证券交易所"}
+
+
+def flow_block():
+    """全市场资金流：超大单净流入净占比。来源：东方财富，日频。"""
+    df = ak.stock_market_fund_flow()
+    df["_d"] = pd.to_datetime(df["日期"])
+    df = df.sort_values("_d")
+    col = "超大单净流入-净占比"
+    put("big_flow_pct", [dlab(x) for x in df["_d"]], df[col],
+        unit="%", nd=2, freq="D", keep=520)
+    last = df.iloc[-1]
+    return {"name": "超大单净流入占比", "date": dlab(last["_d"]),
+            "value": round(float(last[col]), 2), "unit": "%", "src": "东方财富"}
+
+
+def div_block():
+    """上证 A 股整体股息率。来源：乐咕乐股，日频。"""
+    df = ak.stock_a_gxl_lg(symbol="上证A股")
+    df["_d"] = pd.to_datetime(df["日期"])
+    df = df.sort_values("_d")
+    put("div_yield", [dlab(x) for x in df["_d"]], df["股息率"],
+        unit="%", nd=2, freq="D", keep=520)
+    last = df.iloc[-1]
+    return {"name": "上证 A 股股息率", "date": dlab(last["_d"]),
+            "value": round(float(last["股息率"]), 2), "unit": "%", "src": "乐咕乐股"}
+
+
+def gold_fut_block():
+    """沪金主连。来源：新浪期货 futures_zh_daily_sina（2008 年至今，比 futures_main_sina 的窗口长）。
+    日频序列只留近两年，月线留 90 个月供趋势保护使用。"""
+    df = ak.futures_zh_daily_sina(symbol="AU0")
+    df["_d"] = pd.to_datetime(df["date"])
+    df = df.sort_values("_d")
+    put("gold_fut", [dlab(x) for x in df["_d"]], df["close"],
+        unit=" 元/克", nd=2, freq="D", keep=520)
+    # 同时压一份月线，供趋势保护使用（需要 30 个月以上）
+    ks, vs = _monthly_last([dlab(x) for x in df["_d"]], df["close"])
+    put("tr_gold", ks, vs, unit=" 元/克", nd=2, freq="M", keep=90)
+    last = df.iloc[-1]
+    return {"name": "沪金主连", "date": dlab(last["_d"]),
+            "value": round(float(last["close"]), 2), "unit": " 元/克", "src": "上海期货交易所"}
+
+
+def _monthly_last(labels, values):
+    """把日频序列压成月线（每月取最后一个有效值），用于月频趋势判定。"""
+    m = {}
+    for a, b in zip(labels, values):
+        try:
+            fb = float(b)
+        except Exception:
+            continue
+        if pd.isna(fb):
+            continue
+        m[str(a)[:7]] = fb
+    ks = sorted(m)
+    return ks, [m[k] for k in ks]
+
+
+def shibor_monthly_block():
+    """7 天 SHIBOR 月均值。仅用于政策强度指数的「货币价格」分项（需要 3 年以上历史）。"""
+    df = ak.rate_interbank(market="上海银行同业拆借市场", symbol="Shibor人民币", indicator="1周")
+    df["_d"] = pd.to_datetime(df["报告日"])
+    df = df.dropna(subset=["利率"]).sort_values("_d")
+    ks, vs = [], []
+    for m, g in df.groupby(df["_d"].dt.strftime("%Y-%m")):
+        ks.append(m)
+        vs.append(float(g["利率"].astype(float).mean()))
+    put("shibor_7d_m", ks, vs, unit="%", nd=3, freq="M", keep=84)
+    return {"name": "7 天 SHIBOR 月均", "date": ks[-1], "value": round(vs[-1], 3),
+            "unit": "%", "src": "全国银行间同业拆借中心"}
+
+
+def trend_block():
+    """四类资产月线：A股（沪深 300）、利率债（10Y 国债取负作价格代理）、商品（原油）、黄金（沪金）。"""
+    out = {}
+    # A 股：趋势判定要 30 个月以上月线，日线窗口要比看板序列更长
+    try:
+        long_hs = HS if (HS is not None and len(HS) > 900) else em_index("000300", 2600)
+        ks, vs = _monthly_last([dlab(x) for x in long_hs["date"]], long_hs["close"])
+        put("tr_hs300", ks, vs, unit="", nd=2, freq="M", keep=90)
+        out["hs300"] = len(ks)
+    except Exception as e:
+        data["errors"].append({"trend_hs300": f"{type(e).__name__}: {str(e)[:100]}"})
+    # 利率债：中债 10Y 收益率取负
+    try:
+        b = ak.bond_zh_us_rate(start_date="20180101")
+        b = b.dropna(subset=["中国国债收益率10年"])
+        ks, vs = _monthly_last([dlab(x) for x in pd.to_datetime(b["日期"])],
+                               -b["中国国债收益率10年"].astype(float))
+        put("tr_bond", ks, vs, unit="", nd=3, freq="M", keep=90)
+        out["bond"] = len(ks)
+    except Exception as e:
+        data["errors"].append({"trend_bond": f"{type(e).__name__}: {str(e)[:100]}"})
+    # 商品：INE 原油主连
+    try:
+        df = ak.futures_main_sina(symbol="SC0",
+                                  start_date=(TODAY - timedelta(days=2000)).strftime("%Y%m%d"),
+                                  end_date=TODAY.strftime("%Y%m%d"))
+        ks, vs = _monthly_last([dlab(x) for x in pd.to_datetime(df["日期"])], df["收盘价"])
+        put("tr_sc", ks, vs, unit=" 元/桶", nd=1, freq="M", keep=90)
+        out["sc"] = len(ks)
+    except Exception as e:
+        data["errors"].append({"trend_sc": f"{type(e).__name__}: {str(e)[:100]}"})
+    # 黄金：黄金月线已由 gold_fut_block 用 futures_zh_daily_sina（2008 年至今）产出，
+    # 这里只做兜底——若上游没取到长月线，才退回用 gold_fut 的日线聚合（窗口短，趋势保护会判不可用）
+    cur = SER.get("tr_gold", {}).get("points") or []
+    if len(cur) >= 40:
+        out["gold"] = len(cur)
+    else:
+        pts = SER.get("gold_fut", {}).get("points") or []
+        if pts:
+            ks, vs = _monthly_last([p[0] for p in pts], [p[1] for p in pts])
+            put("tr_gold", ks, vs, unit=" 元/克", nd=2, freq="M", keep=90)
+            out["gold"] = len(ks)
+    return out
+
+
+# ---- 申万一级行业：事件库 / 拥挤度 / 生命周期 ----
+def _fwd_ret(close, n=20):
+    """事件后 n 日收益，末尾补 NaN 保持长度对齐。"""
+    c = np.asarray(close, dtype=float)
+    fwd = np.full(len(c), np.nan)
+    if len(c) > n:
+        fwd[:-n] = c[n:] / c[:-n] - 1
+    return fwd
+
+
+def _event_stats(mask, fwd, min_n=8):
+    m = np.asarray(mask, dtype=bool) & ~np.isnan(fwd)
+    n = int(m.sum())
+    if n < 3:
+        return None
+    r = fwd[m]
+    sd = float(np.std(r))
+    # IR 按年化口径：事件后 20 日收益均值 / 标准差 × √(252/20)，与卖方事件库量级可比
+    ir = float(np.mean(r) / sd * np.sqrt(252 / 20)) if sd else None
+    win = float((r > 0).mean())
+    return {"n": n, "ir": round(ir, 2) if ir is not None else None,
+            "win": round(win, 3), "avg": round(float(np.mean(r)) * 100, 2)}
+
+
+def industry_block():
+    """申万一级行业（现行 31 个）：近 3 年日线 → 触发事件、IR、拥挤度、生命周期标签。
+
+    事件口径（8 种模式，参照广发事件库的四类写法）：
+      历史高低点：创 250 日新高 / 新低
+      均值±2σ：上破 / 下破 60 日均值 2 倍标准差
+      连续涨跌：连涨 5 日 / 连跌 5 日
+      涨后跌 / 跌后涨：5 日累计涨(跌)超 4% 后当日反向超 1.5%
+    IR 为事件后 20 日收益的均值/标准差（非年化）；按 IR≥0.7 且次数≥8 判为「有效事件」。
+    """
+    info = ak.sw_index_first_info()
+    info["_code"] = info["行业代码"].astype(str).str.split(".").str[0]
+    items, fails = [], []
+    for _, row in info.iterrows():
+        code, name = row["_code"], str(row["行业名称"])
+        try:
+            df = ak.index_hist_sw(symbol=code, period="day")
+            df = df.sort_values("日期")
+            close = pd.to_numeric(df["收盘"], errors="coerce")
+            amt = pd.to_numeric(df["成交额"], errors="coerce")
+            close = close.dropna()
+            if len(close) < 300:
+                fails.append(name)
+                continue
+            c = close.values.astype(float)
+            a = amt.reindex(close.index).fillna(0).values.astype(float)
+            s = pd.Series(c)
+            ret = s.pct_change()
+            ma60 = s.rolling(60).mean()
+            sd60 = s.rolling(60).std()
+            ma20a = pd.Series(a).rolling(20).mean()
+            hi250 = s.rolling(250, min_periods=200).max()
+            lo250 = s.rolling(250, min_periods=200).min()
+            fwd = _fwd_ret(c, 20)
+
+            pats = [
+                ("创 250 日新高", "历史高低点", (c >= hi250.values)),
+                ("创 250 日新低", "历史高低点", (c <= lo250.values)),
+                ("上破 60 日均值 +2σ", "均值±2σ", (s > ma60 + 2 * sd60).values),
+                ("下破 60 日均值 −2σ", "均值±2σ", (s < ma60 - 2 * sd60).values),
+                ("连涨 5 日", "连续涨跌", ret.rolling(5).apply(lambda x: (x > 0).all(), raw=True).fillna(0).values > 0),
+                ("连跌 5 日", "连续涨跌", ret.rolling(5).apply(lambda x: (x < 0).all(), raw=True).fillna(0).values > 0),
+                ("涨后跌", "涨后跌",
+                 ((s / s.shift(5) - 1 > 0.04) & (ret < -0.015)).fillna(False).values),
+                ("跌后涨", "涨后跌",
+                 ((s / s.shift(5) - 1 < -0.04) & (ret > 0.015)).fillna(False).values),
+            ]
+            trig, all_ev = [], []
+            for label, group, mask in pats:
+                st = _event_stats(mask, fwd)
+                if not st:
+                    continue
+                effective = (st["ir"] is not None and st["ir"] >= 0.7 and st["n"] >= 8)
+                ev = {"name": label, "group": group, "ir": st["ir"], "n": st["n"],
+                      "win": st["win"], "avg": st["avg"], "effective": effective}
+                all_ev.append(ev)
+                if bool(np.asarray(mask)[-1]):
+                    trig.append(dict(ev, date=dlab(df.iloc[-1]["日期"])))
+
+            heat = pctile(ma20a.tail(760), float(ma20a.iloc[-1])) if not pd.isna(ma20a.iloc[-1]) else None
+            price_pct = pctile(c[-760:], c[-1])
+            mom20 = (c[-1] / c[-21] - 1) * 100 if len(c) > 21 else None
+            mom60 = (c[-1] / c[-61] - 1) * 100 if len(c) > 61 else None
+
+            if heat is not None and heat > 0.9:
+                lab, why = "高拥挤筑顶", f"成交热度 {round(heat * 100)}% 分位（>90%）"
+            elif mom20 is not None and mom20 < -8:
+                lab, why = "超跌反弹", f"近 20 日 {mom20:.1f}%（<-8%）且未触发高拥挤"
+            elif price_pct is not None and price_pct < 0.2 and (mom20 or 0) > 0:
+                lab, why = "困境反转", f"价格分位 {round(price_pct * 100)}%（<20%）且 20 日动量转正"
+            elif mom60 is not None and mom60 > 0:
+                lab, why = "趋势跟踪", f"60 日动量 {mom60:+.1f}%，未触发其他条件"
+            else:
+                lab, why = "弱势整理", f"20 日 {(mom20 or 0):+.1f}%、60 日 {(mom60 or 0):+.1f}%，均未转正"
+
+            eff = [e for e in trig if e["effective"]]
+            items.append({
+                "code": code, "name": name, "close": round(float(c[-1]), 2),
+                "mom20": None if mom20 is None else round(mom20, 1),
+                "mom60": None if mom60 is None else round(mom60, 1),
+                "heat_pct": heat, "price_pctile": price_pct,
+                "pe": None if pd.isna(row.get("TTM(滚动)市盈率")) else round(float(row["TTM(滚动)市盈率"]), 1),
+                "pb": None if pd.isna(row.get("市净率")) else round(float(row["市净率"]), 2),
+                "div": None if pd.isna(row.get("静态股息率")) else round(float(row["静态股息率"]), 2),
+                "label": lab, "label_why": why,
+                "triggered": bool(eff), "events": trig,
+                "best_ir": max([e["ir"] for e in eff], default=None),
+            })
+        except Exception as e:
+            fails.append(name)
+            data["errors"].append({f"sw_{name}": f"{type(e).__name__}: {str(e)[:70]}"})
+    if fails:
+        print("[warn] 申万行业未取到：" + "、".join(fails[:8]))
+    return {"available": bool(items), "asof": data.get("asof", {}).get("trade_date"),
+            "items": items, "n": len(items),
+            "note": "申万一级现行 31 个行业全量纳入；IR 为自算并年化（事件后 20 日收益均值/标准差 × √(252/20)）",
+            "rule": "事件有效标准：IR ≥ 0.7 且历史触发次数 ≥ 8；拥挤度＝成交额 MA20 的近 3 年分位，>90% 判高拥挤",
+            "missed": fails}
+
+
+v2_extra = {}
+for _name, _fn in [("sf", sf_block), ("fai", fai_block), ("margin", margin_block),
+                   ("flow", flow_block), ("div", div_block), ("gold_fut", gold_fut_block),
+                   ("shibor_m", shibor_monthly_block)]:
+    r = block("v2_" + _name, _fn)
+    if r:
+        v2_extra[_name] = r
+    time.sleep(0.6)
+
+trend_info = block("v2_trend", trend_block)
+industry = block("v2_industry", industry_block)
+
+# ---- macro_v2：三轴/卦限/库存/仓位/政策/因子/风格/趋势/ERP/行业 ----
+try:
+    import macro_v2
+    data["macro_v2"] = macro_v2.build(SER, industry)
+    if trend_info:
+        data["macro_v2"]["trend_series"] = trend_info
+except Exception as e:
+    data["errors"].append({"macro_v2": f"{type(e).__name__}: {str(e)[:120]}"})
+    data["macro_v2"] = {"available": False, "note": "计算层异常：" + str(e)[:80]}
+
+# =====================================================================
 # 10. 结论卡片
 # =====================================================================
 QADV = quad_advice

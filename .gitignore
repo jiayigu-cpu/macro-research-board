@@ -8,3 +8,8 @@ server.log
 
 # 系统文件
 .DS_Store
+
+# 本地校验临时产物
+_test_data.json
+.shots/
+__pycache__/
