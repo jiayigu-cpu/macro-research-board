@@ -68,29 +68,44 @@ sudo DOMAIN=board.example.com EMAIL=me@example.com bash deploy/install.sh
 
 ## HTTPS
 
-证书用 Let's Encrypt，免费，验证走 80 端口的 `/.well-known/acme-challenge/`（nginx 静态返回），
-续期由 `certbot.timer` 每天两次自动跑，续完自动 reload nginx。
+线上已启用：**https://doreenboard.online**（Let's Encrypt，到期 2027-02-25，自动续期）。
 
 ```bash
-sudo bash deploy/setup-https.sh board.example.com you@example.com
+sudo bash deploy/setup-https.sh doreenboard.online you@example.com
 ```
 
-**一个必须知道的坑**：广州这类国内地域，**未备案域名访问 443 会被云厂商拦**。
-所以脚本同时监听 `443` 和 `8443`：443 不通就换 8443，证书是同一张，浏览器一样是绿锁，只是网址多带一个端口。
-备案批下来后，`sudo HTTPS_PORT=443 bash deploy/setup-https.sh 域名` 重跑一次即可去掉端口。
+脚本按顺序做这些事：
 
-如果 80 端口也被拦导致证书签不下来，脚本会打印 DNS 验证的替代方案（手动加一条 TXT 记录）；
-DNS 托管在 DNSPod 的话，可以装 `certbot-dns-dnspod` 让续期也全自动。
+- 校验域名的 A 记录是否指向本机（不一致只告警，`STRICT=1` 才拦）
+- `certbot --webroot` 走 80 端口的 `/.well-known/acme-challenge/` 签证书，nginx 静态返回
+- nginx 同时监听 `443`（主）与 `8443`（兜底）；80 段保留验证目录并整站 301 到 HTTPS
+- 用 IP 直连时也跳到域名，否则会落到证书不匹配的 `https://IP` 上
+- 装 `certbot.timer` + reload 钩子，每天两次自动续期，续完自动 reload nginx
+
+| 变量 | 默认 | 说明 |
+| --- | --- | --- |
+| `PRIMARY_PORT` | `443` | 对外网址用的主端口 |
+| `HTTPS_PORT` | `8443` | 兜底端口，与主端口相同则不监听 |
+| `STRICT` | 空 | 设 `1` 时解析不一致直接退出 |
+
+**关于备案**：原本按「广州地域未备案域名 443 会被拦」做了最坏打算，**实测这台机器没拦**——
+`https://doreenboard.online` 直接返回 200，`ssl_verify_result=0` 说明证书链完整。
+但政策随时可能收紧，所以 8443 兜底端口留着：真被拦时换个端口继续用，不用改代码。
+443 与 8443 都要在云防火墙放行。
+
+真签不下证书（80 被拦）时，脚本会打印 DNS 验证方案——手动加一条 `_acme-challenge` 的 TXT 记录；
+DNS 托管在 DNSPod 的话可以装 `certbot-dns-dnspod`，让续期也全自动。
 
 ## 当前线上部署
 
 | 项目 | 值 |
 | --- | --- |
-| 地址 | http://114.132.50.154 |
-| 机器 | 腾讯云轻量，广州四区，Ubuntu 24.04，2 核 2G |
+| 地址 | **https://doreenboard.online**（兜底端口 `:8443`） |
+| 机器 | 腾讯云轻量，广州四区，Ubuntu 24.04，2 核 2G，公网 IP `114.132.50.154` |
 | 安装目录 | `/opt/macro-board` |
 | 进程 | systemd `macro-board.service`，用户 `ubuntu`，Node 监听 `127.0.0.1:8080` |
-| 入口 | nginx 80 → 8080，gzip 已开（`styles.css` 38K → 10.9K） |
+| 入口 | nginx 443（HTTPS）→ 8080；80 整站 301 到 443；用 IP 访问也跳到域名 |
+| 证书 | Let's Encrypt，`/etc/letsencrypt/live/doreenboard.online/`，到期 2027-02-25，自动续期 |
 | Python | `/opt/macro-board/venv`，`akshare==1.18.60` |
 | 数据 | 43 条序列，最近交易日以页面顶部标注为准 |
 

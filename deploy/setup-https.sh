@@ -6,9 +6,10 @@
 #   sudo bash deploy/setup-https.sh board.example.com you@example.com
 #
 # 环境变量：
-#   HTTPS_PORT  额外监听的备用端口，默认 8443
-#               （国内地域未备案域名常被拦 443，备用端口能绕开）
-#   STRICT=1    DNS 未指向本机时直接报错退出
+#   PRIMARY_PORT  主端口，默认 443，就是对外网址里用的那个
+#   HTTPS_PORT    额外兜底端口，默认 8443（与主端口相同则不监听）
+#                 国内地域未备案域名偶尔被拦 443，兜底端口能临时救急
+#   STRICT=1      DNS 未指向本机时直接报错退出
 #
 # 说明：
 #   · 证书验证走 80 端口的 /.well-known/acme-challenge/，由 nginx 静态返回
@@ -24,7 +25,8 @@ fi
 SRC="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 DOMAIN="${1:-}"
 EMAIL="${2:-${EMAIL:-}}"
-HTTPS_PORT="${HTTPS_PORT:-8443}"
+PRIMARY_PORT="${PRIMARY_PORT:-443}"
+EXTRA_PORT="${HTTPS_PORT:-8443}"
 BACKEND="${BACKEND:-127.0.0.1:8080}"
 HTTP_PORT="${HTTP_PORT:-80}"
 CERT_DIR="/etc/letsencrypt/live/$DOMAIN"
@@ -93,17 +95,22 @@ fi
 
 # ---------- 3. nginx 配置 ----------
 say "写入 nginx 配置"
-if [[ "$HTTPS_PORT" == "443" ]]; then
-  LISTEN_LINES="    listen 443 ssl http2;\n    listen [::]:443 ssl http2;"
+LISTEN_LINES="    listen $PRIMARY_PORT ssl http2;\n    listen [::]:$PRIMARY_PORT ssl http2;"
+if [[ "$EXTRA_PORT" != "$PRIMARY_PORT" ]]; then
+  LISTEN_LINES="$LISTEN_LINES\n    listen $EXTRA_PORT ssl http2;\n    listen [::]:$EXTRA_PORT ssl http2;"
+fi
+if [[ "$PRIMARY_PORT" == "443" ]]; then
   REDIRECT='https://$host$request_uri'
+  REDIRECT_IP="https://$DOMAIN\$request_uri"
 else
-  LISTEN_LINES="    listen 443 ssl http2;\n    listen [::]:443 ssl http2;\n    listen $HTTPS_PORT ssl http2;\n    listen [::]:$HTTPS_PORT ssl http2;"
-  REDIRECT="https://\$host:$HTTPS_PORT\$request_uri"
+  REDIRECT="https://\$host:$PRIMARY_PORT\$request_uri"
+  REDIRECT_IP="https://$DOMAIN:$PRIMARY_PORT\$request_uri"
 fi
 
 sed -e "s|__HTTP_PORT__|$HTTP_PORT|g" \
     -e "s|__BACKEND__|$BACKEND|g" \
     -e "s|__DOMAIN__|$DOMAIN|g" \
+    -e "s|__REDIRECT_IP__|$REDIRECT_IP|g" \
     -e "s|__REDIRECT__|$REDIRECT|g" \
     -e "s|__HTTPS_LISTEN__|$LISTEN_LINES|" \
     "$SRC/deploy/nginx-https.conf.tpl" > /etc/nginx/sites-available/macro-board
@@ -112,7 +119,11 @@ ln -sf /etc/nginx/sites-available/macro-board /etc/nginx/sites-enabled/macro-boa
 rm -f /etc/nginx/sites-enabled/default
 nginx -t >/dev/null 2>&1 || { nginx -t; die "nginx 配置有误，已保留上一版未生效"; }
 systemctl reload nginx 2>/dev/null || systemctl restart nginx
-ok "已监听 443 与 $HTTPS_PORT，80 整站跳转"
+if [[ "$EXTRA_PORT" == "$PRIMARY_PORT" ]]; then
+  ok "已监听 $PRIMARY_PORT，80 整站跳转"
+else
+  ok "已监听 $PRIMARY_PORT（主）与 $EXTRA_PORT（兜底），80 跳转到 $PRIMARY_PORT"
+fi
 
 # ---------- 4. 自动续期钩子 ----------
 install -d /etc/letsencrypt/renewal-hooks/deploy
@@ -123,14 +134,20 @@ ok "续期钩子已装（certbot.timer 每天检查两次）"
 
 # ---------- 5. 自检 ----------
 say "本机自检"
-for p in 443 "$HTTPS_PORT"; do
+PORTS="$PRIMARY_PORT"
+[[ "$EXTRA_PORT" != "$PRIMARY_PORT" ]] && PORTS="$PORTS $EXTRA_PORT"
+for p in $PORTS; do
   code="$(curl -s -o /dev/null -w '%{http_code}' --max-time 10 --resolve "$DOMAIN:$p:127.0.0.1" "https://$DOMAIN:$p/" || true)"
   [[ "$code" == "200" ]] && ok "https://$DOMAIN:$p/  → $code" || warn "https://$DOMAIN:$p/  → ${code:-失败}"
 done
 
 say "完成"
-echo "    对外访问先试   https://$DOMAIN"
-echo "    如果 443 打不开（未备案域名常见），用   https://$DOMAIN:$HTTPS_PORT"
+if [[ "$PRIMARY_PORT" == "443" ]]; then
+  echo "    网址           https://$DOMAIN"
+else
+  echo "    网址           https://$DOMAIN:$PRIMARY_PORT"
+fi
+[[ "$EXTRA_PORT" != "$PRIMARY_PORT" ]] && echo "    兜底端口       https://$DOMAIN:$EXTRA_PORT（主端口被拦时用这个）"
 echo "    手动验证续期   sudo certbot renew --dry-run"
 echo
-echo "    云防火墙要放行 TCP 443 与 $HTTPS_PORT，否则外网连不上"
+echo "    云防火墙要放行 TCP $PRIMARY_PORT${EXTRA_PORT:+ 与 $EXTRA_PORT}，否则外网连不上"

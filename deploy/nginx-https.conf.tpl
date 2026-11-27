@@ -1,9 +1,9 @@
 # HTTPS 版：80 段保留证书续期目录并整站跳转，TLS 段同时监听 443 与备用端口
-# 由 deploy/setup-https.sh 注入 HTTP_PORT / HTTPS_LISTEN / REDIRECT / DOMAIN / BACKEND
+# 由 deploy/setup-https.sh 注入 HTTP_PORT / HTTPS_LISTEN / REDIRECT / REDIRECT_IP / DOMAIN / BACKEND
 server {
-    listen __HTTP_PORT__ default_server;
-    listen [::]:__HTTP_PORT__ default_server;
-    server_name __DOMAIN__ _;
+    listen __HTTP_PORT__;
+    listen [::]:__HTTP_PORT__;
+    server_name __DOMAIN__;
 
     access_log /var/log/nginx/macro-board.access.log;
     error_log  /var/log/nginx/macro-board.error.log;
@@ -16,6 +16,25 @@ server {
 
     location / {
         return 301 __REDIRECT__;
+    }
+}
+
+# 其它 Host（用 IP 直连、旧书签）统一跳到域名，否则会落到证书不匹配的 https://IP
+server {
+    listen __HTTP_PORT__ default_server;
+    listen [::]:__HTTP_PORT__ default_server;
+    server_name _;
+
+    access_log /var/log/nginx/macro-board.access.log;
+    error_log  /var/log/nginx/macro-board.error.log;
+
+    location /.well-known/acme-challenge/ {
+        root /var/www/acme;
+        default_type text/plain;
+    }
+
+    location / {
+        return 301 __REDIRECT_IP__;
     }
 }
 
