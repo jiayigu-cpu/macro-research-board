@@ -1471,10 +1471,41 @@ def industry_block():
             "missed": fails}
 
 
+def rrr_block():
+    """存款准备金率。来源：akshare macro_china_reserve_requirement_ratio（央行公告，事件驱动，
+    有调整即新增一行，无调整不新增）。数据按公布时间倒序，需要按「生效时间」正序后取末值。
+    产出：rrr_large 序列（历次调整台阶）+ 当前大型/中小型数值。"""
+    df = ak.macro_china_reserve_requirement_ratio()
+    df = df.dropna(subset=["大型金融机构-调整后"])
+
+    def _d(s):
+        m = re.match(r"(\d{4})\D+(\d{1,2})\D+(\d{1,2})", str(s))
+        return "%s-%02d-%02d" % (m.group(1), int(m.group(2)), int(m.group(3))) if m else None
+
+    rows = []
+    for _, r in df.iterrows():
+        k = _d(r["生效时间"])
+        if not k:
+            continue
+        large = r["大型金融机构-调整后"]
+        small = r["中小金融机构-调整后"]
+        rows.append((k, float(large), float(small) if pd.notna(small) else None))
+    if not rows:
+        return None
+    rows.sort()
+    put("rrr_large", [x[0] for x in rows], [x[1] for x in rows],
+        unit="%", freq="E", nd=2, keep=40)
+    last = rows[-1]
+    prev = rows[-2][1] if len(rows) > 1 else None
+    return {"large": last[1], "small": last[2], "asof": last[0],
+            "chg": round(last[1] - prev, 2) if prev is not None else None,
+            "n": len(rows)}
+
+
 v2_extra = {}
 for _name, _fn in [("sf", sf_block), ("fai", fai_block), ("margin", margin_block),
                    ("flow", flow_block), ("div", div_block), ("gold_fut", gold_fut_block),
-                   ("shibor_m", shibor_monthly_block)]:
+                   ("shibor_m", shibor_monthly_block), ("rrr", rrr_block)]:
     r = block("v2_" + _name, _fn)
     if r:
         v2_extra[_name] = r
@@ -1492,6 +1523,41 @@ try:
 except Exception as e:
     data["errors"].append({"macro_v2": f"{type(e).__name__}: {str(e)[:120]}"})
     data["macro_v2"] = {"available": False, "note": "计算层异常：" + str(e)[:80]}
+
+# =====================================================================
+# 9.7 政策工具箱：自动项 + 人工口径
+#   自动项（存准率）由 rrr_block 抓取；其余为年度/事件性口径，放在仓库根目录
+#   manual.json，由定时任务核验官方公告后更新。前端从 data.manual.items 取，
+#   缺项回落到 config.js 里的「待人工更新」，不会出现空白或报错。
+# =====================================================================
+def manual_block(rrr):
+    items, meta = {}, {}
+    mf = os.path.join(BASE, "manual.json")
+    if os.path.isfile(mf):
+        try:
+            with open(mf, encoding="utf-8") as f:
+                mm = json.load(f)
+            src = mm.get("items") or {}
+            for k, val in src.items():
+                if isinstance(val, dict) and val.get("v"):
+                    items[k] = {"v": val["v"], "note": val.get("note", ""),
+                                "asof": val.get("asof"), "src": val.get("src", "人工"),
+                                "auto": False}
+            meta = {"updated": mm.get("updated"), "source": mm.get("source")}
+        except Exception as e:
+            data["errors"].append({"manual.json": f"{type(e).__name__}: {str(e)[:90]}"})
+    if rrr:
+        extra = ("，较上次 %+.2fpp" % rrr["chg"]) if rrr.get("chg") is not None else ""
+        items["rrr"] = {
+            "v": "%.2f%% / %.2f%%" % (rrr["large"], rrr["small"]),
+            "note": "大型 / 中小型金融机构，%s 生效%s" % (rrr["asof"], extra),
+            "asof": rrr["asof"], "src": "央行公告（自动抓取）", "auto": True}
+    return {"available": bool(items), "items": items,
+            "updated": meta.get("updated"), "source": meta.get("source"),
+            "note": "存准率为自动抓取；其余为年度/事件性人工口径，按官方公告更新"}
+
+
+data["manual"] = manual_block((v2_extra or {}).get("rrr"))
 
 # =====================================================================
 # 10. 结论卡片

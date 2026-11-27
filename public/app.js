@@ -757,6 +757,9 @@
     const find = function (list, kw) {
       return (list || []).filter(function (x) { return x && String(x.name || '').indexOf(kw) > -1; })[0];
     };
+    /* 政策工具箱人工口径：fetch_data.py 把 manual.json 并入 data.manual.items */
+    const man = (DATA.manual || {}).items || {};
+    if (man[kind] && man[kind].v) return man[kind].v;
     if (kind === 'lpr') {
       const m = find((dims.policy || {}).official, 'LPR');
       return m && !isNil(m.lpr1y) ? Number(m.lpr1y).toFixed(2) + '% / ' + Number(m.lpr5y).toFixed(2) + '%' : null;
@@ -771,14 +774,20 @@
   function renderToolbox() {
     const box = $('#toolbox');
     const tb = CFG.toolbox || [];
-    $('#tool-note').textContent = '人工维护 · 复核 ' + (CFG.toolboxUpdated || '—');
+    const man = (DATA.manual || {}).items || {};
+    $('#tool-note').textContent = '复核 ' + ((DATA.manual || {}).updated || CFG.toolboxUpdated || '—') +
+      ' · 存准率自动抓取，其余按官方公告更新';
     box.innerHTML = tb.map(function (p) {
       return '<div class="tool ' + (p.tone || 'mid') + '"><div class="tool-h">' + p.pillar + '</div>' +
         p.items.map(function (it) {
+          const m = it.dyn ? man[it.dyn] : null;
           const v = it.dyn ? (dynVal(it.dyn) || it.v) : it.v;
           const todo = v.indexOf('待人工更新') > -1;
-          return '<div class="tool-row"><span class="tk">' + it.k + '</span><b class="' + (todo ? 'todo' : '') + '">' + v + '</b>' +
-            '<span class="tn">' + it.note + '</span></div>';
+          const note = (m && m.note) ? m.note : it.note;
+          const tip = m ? String((m.src || '') + (m.asof ? ' · ' + m.asof : '')).replace(/"/g, '') : '';
+          return '<div class="tool-row"><span class="tk">' + it.k + '</span>' +
+            '<b class="' + (todo ? 'todo' : '') + '"' + (tip ? ' title="' + tip + '"' : '') + '>' + v + '</b>' +
+            '<span class="tn">' + note + '</span></div>';
         }).join('') + '</div>';
     }).join('');
   }
