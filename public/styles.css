@@ -1244,3 +1244,12 @@ html { scroll-behavior: smooth; }
   .top { top: 52px; }
   section[id] { scroll-margin-top: 108px; }
 }
+
+/* 指标走势图图例（双序列指标：M1/M2、LPR 1Y/5Y、美债曲线） */
+.chart-legend {
+  display: flex; flex-wrap: wrap; gap: 6px 16px;
+  margin: 2px 0 4px; padding-left: 44px;
+  font-size: 10.5px; color: var(--muted);
+}
+.chart-legend span { display: inline-flex; align-items: center; gap: 5px; }
+.chart-legend i { width: 12px; height: 2px; border-radius: 1px; flex: 0 0 auto; }

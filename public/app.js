@@ -50,7 +50,8 @@
   function lines(k, name, idx) {
     const p = pts(k);
     if (!p) return null;
-    const cols = [cssVar('--up'), cssVar('--down'), cssVar('--alt')];
+    // 不用红绿：多线一红一绿会被读成涨跌（A 股语义），这里用中性的青 / 紫
+    const cols = [cssVar('--accent'), cssVar('--alt'), cssVar('--up')];
     return { name: name, points: p, color: cols[idx || 0] };
   }
 
@@ -353,9 +354,9 @@
   ];
 
   function metricVal(m) {
-    if (!isNil(m.m1) || !isNil(m.m2)) return 'M1 <b>' + n(m.m1, 1) + '</b> / <b>' + n(m.m2, 1) + '</b>%';
-    if (!isNil(m.lpr1y)) return '<b>' + Number(m.lpr1y).toFixed(2) + '</b> / <b>' + Number(m.lpr5y).toFixed(2) + '</b>%';
-    if (!isNil(m.fx_yi_usd)) return '<b>' + smart(m.fx_yi_usd) + '</b> 亿美元' + (isNil(m.gold_wan_oz) ? '' : '<small>黄金 ' + smart(m.gold_wan_oz) + '</small>');
+    if (!isNil(m.m1) || !isNil(m.m2)) return 'M1 <b>' + n(m.m1, 1) + '</b>% / M2 <b>' + n(m.m2, 1) + '</b>%';
+    if (!isNil(m.lpr1y)) return '1Y <b>' + Number(m.lpr1y).toFixed(2) + '</b>% / 5Y <b>' + Number(m.lpr5y).toFixed(2) + '</b>%';
+    if (!isNil(m.fx_yi_usd)) return '<b>' + smart(m.fx_yi_usd) + '</b> 亿美元' + (isNil(m.gold_wan_oz) ? '' : '<small>黄金 ' + smart(m.gold_wan_oz) + ' 万盎司</small>');
     if (!isNil(m.us10y)) return '<b>' + n(m.us10y, 2) + '</b>% <small>中美利差 ' + n(m.cnus10, 2) + 'pp</small>';
     if (String(m.name || '').indexOf('财政收入') === 0) return '<b>' + smart(m.value) + '</b> 亿元' + (isNil(m.cum_yoy) ? '' : '<small>累计同比 ' + n(m.cum_yoy, 1) + '%</small>');
     return '<b>' + smart(m.value) + '</b>' + (m.unit === '%' ? '%' : (m.unit ? ' ' + m.unit : ''));
@@ -425,42 +426,104 @@
         const all = (dd.official || []).concat(dd.highfreq || []);
         const m = all.filter(function (x) { return x && x.name === name; })[0] || {};
         const tg = tagsOf(dim, name);
-        const seriesKey = guessSeries(name);
-        const ln = seriesKey ? lines(seriesKey, name, 0) : null;
+        const keys = guessSeries(name);
+        const lns = keys.map(function (k, i) { return lines(k, SERIES_LABEL[k] || k, i); })
+          .filter(function (x) { return x && x.points && x.points.length; });
+        const hasChart = lns.length > 0;
+        // 两条以上才需要图例，单线时标题已经说明画的是什么
+        const legend = lns.length > 1 ? '<div class="chart-legend">' + lns.map(function (l) {
+          return '<span><i style="background:' + l.color + '"></i>' + esc(l.name) + '</span>';
+        }).join('') + '</div>' : '';
+        // 只有跨零的序列（剪刀差、利差）才以 0 为基准，否则收益率曲线的差异会被压平
+        const crossZero = lns.some(function (l) {
+          return l.points.some(function (q) { return q[1] < 0; });
+        });
+        const fr = hasChart ? freqOf(keys[0]) : '';
+        const freqTxt = fr === 'M' ? '月频' : fr === 'Q' ? '季频' : fr ? '日频' : '—';
         openDrawer({
           title: name,
           sub: (m.date || '') + '　' + (tg.length ? tg.join(' · ') : ''),
           html: sec('当前读数', '<div class="dheadline">' + metricVal(m).replace(/<\/?small>/g, '') + '</div>' +
             (m.read ? '<p class="dtext">' + esc(m.read) + '</p>' : '')) +
-            (ln ? sec('走势', '<div class="chart-body" id="d-chart"></div>') : '') +
+            (hasChart ? sec('走势', '<div class="chart-body" id="d-chart"></div>' + legend) : '') +
             sec('标签', '<div class="dact">' + (tg[0] ? '领先性：' + tg[0] + '　' : '') + (tg[1] ? '传导链位置：' + tg[1] : '') +
               '<br><span class="dsrc">领先 / 同步 / 滞后按东财框架；政策目标 → 中间过程 → 经济结果按长江框架</span></div>') +
             sec('判定与口径', stepsHTML([
-              (m.unit ? '单位：' + m.unit + '；' : '') + '频率：' + (seriesKey ? (freqOf(seriesKey) === 'M' ? '月频' : freqOf(seriesKey) === 'Q' ? '季频' : '日频') : '—'),
+              (m.unit ? '单位：' + m.unit + '；' : '') + '频率：' + freqTxt,
               m.pctile_1y != null ? '近一年分位：' + pct(m.pctile_1y) : '分位数据待接入',
               m.src ? '来源：' + m.src : '来源见页脚'
             ])) +
             noteHTML(m.note || ''),
-          chart: ln ? { lines: [ln], unit: m.unit || '', nd: 2, height: 180, zero: /剪刀差|利差|同比/.test(name) } : null
+          chart: hasChart ? { lines: lns, unit: m.unit || '', nd: 2, height: 180, zero: crossZero } : null
         });
       });
     });
   }
 
+  /* 指标名 → 序列 key。值统一为数组，双序列指标（M1/M2、LPR、美债曲线）画多条线。
+     名字必须与 data.json 里 dims 的实际 name 完全一致，否则会退化为「没有走势图」。 */
   const SERIES_GUESS = {
-    '制造业 PMI': 'pmi', '非制造业 PMI': 'pmi_non', '工业增加值同比': 'iav', '工业增加值累计同比': 'iav_cum',
-    'CPI 同比': 'cpi', 'CPI 环比': 'cpi_mom', 'PPI 同比': 'ppi', 'M1 同比': 'm1', 'M2 同比': 'm2',
-    'M1 − M2 剪刀差': 'scissors', 'SHIBOR 隔夜': 'shibor_on', 'SHIBOR 7天': 'shibor_7d',
-    'LPR 1Y / 5Y': 'lpr1y', '国债收益率 10Y / 1Y': 'y10', '期限利差 10Y − 1Y': 'slope',
-    '新增人民币贷款（社融主项）': 'credit_inc', '财政收入（当月 / 累计同比）': 'fiscal_rev',
-    '外汇储备': 'fxres', '黄金储备（央行口径）': 'gold', 'USD/CNY 中间价': 'usdcny',
-    '美国 10Y 国债收益率': 'us10y', '中美 10Y 利差': 'cnus10', '沪深 300 与 60 日均线': 'hs300',
-    '两市成交额': 'amount', '股权风险溢价 ERP': 'erp', '螺纹钢主力连续': 'rb', 'INE 原油主力': 'sc'
+    // 增长
+    '官方制造业 PMI': ['pmi'],
+    '制造业 PMI': ['pmi'],
+    '非制造业 PMI': ['pmi_non'],
+    '规模以上工业增加值同比': ['iav'],
+    '规模以上工业增加值累计同比': ['iav_cum'],
+    '工业增加值同比': ['iav'],
+    '工业增加值累计同比': ['iav_cum'],
+    // 通胀
+    'CPI 同比': ['cpi'], 'CPI 环比': ['cpi_mom'], 'PPI 同比': ['ppi'],
+    // 流动性
+    'M1 / M2 同比': ['m1', 'm2'],
+    'M1 同比': ['m1'], 'M2 同比': ['m2'],
+    'M1 − M2 剪刀差': ['scissors'],
+    'SHIBOR 隔夜': ['shibor_on'], 'SHIBOR 7天': ['shibor_7d'],
+    '新增人民币贷款（社融主项）': ['credit_inc'],
+    // 政策
+    'LPR 1Y / 5Y 报价': ['lpr1y', 'lpr5y'],
+    'LPR 1Y / 5Y': ['lpr1y', 'lpr5y'],
+    // 财政
+    '财政收入（当月 / 累计同比）': ['fiscal_rev'],
+    '超长端利差 30Y − 10Y': ['us30y', 'us10y'],
+    // 外部
+    '外汇储备 / 黄金储备': ['fxres'],
+    '美债 10Y / 中美利差': ['us10y', 'cnus10'],
+    '美国 10Y 国债收益率': ['us10y'],
+    '中美 10Y 利差': ['cnus10'],
+    'USD/CNY 中间价': ['usdcny'],
+    // 市场
+    '国债收益率 10Y / 1Y': ['y10', 'y1'],
+    '期限利差 10Y − 1Y': ['slope'],
+    '沪深 300 与 60 日均线': ['hs300', 'hs300_ma60'],
+    '两市成交额': ['amount'],
+    '股权风险溢价 ERP': ['erp'],
+    '螺纹钢主力连续': ['rb'], 'INE 原油主力': ['sc']
   };
+
+  /* 图例用短名：序列 key 的全称太长，图上放不下 */
+  const SERIES_LABEL = {
+    pmi: 'PMI', pmi_non: '非制造业', iav: '工业增加值', iav_cum: '累计同比',
+    cpi: 'CPI', cpi_mom: 'CPI 环比', ppi: 'PPI',
+    m1: 'M1', m2: 'M2', scissors: '剪刀差',
+    lpr1y: 'LPR 1Y', lpr5y: 'LPR 5Y',
+    us10y: '美债 10Y', us30y: '美债 30Y', cnus10: '中美利差',
+    y10: '国债 10Y', y1: '国债 1Y', slope: '期限利差',
+    fxres: '外汇储备', hs300: '沪深 300', hs300_ma60: 'MA60',
+    amount: '成交额', erp: 'ERP', rb: '螺纹钢', sc: '原油',
+    shibor_on: 'SHIBOR 隔夜', shibor_7d: 'SHIBOR 7D', credit_inc: '新增贷款',
+    fiscal_rev: '财政收入', usdcny: 'USD/CNY'
+  };
+
+  /* 返回序列 key 数组。先精确匹配；再按 key 长度降序做包含匹配，
+     避免「工业增加值同比」抢先匹配到「规模以上工业增加值累计同比」。 */
   function guessSeries(name) {
+    if (!name) return [];
     if (SERIES_GUESS[name]) return SERIES_GUESS[name];
-    for (const k in SERIES_GUESS) if (name && name.indexOf(k) === 0) return SERIES_GUESS[k];
-    return null;
+    const keys = Object.keys(SERIES_GUESS).sort(function (a, b) { return b.length - a.length; });
+    for (let i = 0; i < keys.length; i++) {
+      if (name.indexOf(keys[i]) > -1) return SERIES_GUESS[keys[i]];
+    }
+    return [];
   }
 
   /* ============================================================
